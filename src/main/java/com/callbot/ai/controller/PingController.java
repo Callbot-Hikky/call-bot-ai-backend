@@ -1,4 +1,4 @@
-package com.callbot.ai.web;
+package com.callbot.ai.controller;
 
 import java.time.Instant;
 import java.util.Map;

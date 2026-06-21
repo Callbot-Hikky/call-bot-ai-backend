@@ -30,6 +30,8 @@ services:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-callbot}?serverTimezone=UTC
       SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-callbot}
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-callbot}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me-please-32bytes-minimum-required}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
     ports:
       - "${SERVER_PORT:-8080}:8080"
 
