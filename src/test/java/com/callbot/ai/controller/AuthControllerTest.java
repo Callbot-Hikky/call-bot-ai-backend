@@ -1,0 +1,59 @@
+package com.callbot.ai.controller;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.FilterType;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+
+import com.callbot.ai.dto.AuthResponse;
+import com.callbot.ai.security.JwtAuthenticationFilter;
+import com.callbot.ai.service.AuthService;
+
+@WebMvcTest(controllers = AuthController.class,
+        excludeFilters = @ComponentScan.Filter(
+                type = FilterType.ASSIGNABLE_TYPE,
+                classes = JwtAuthenticationFilter.class))
+@AutoConfigureMockMvc(addFilters = false)
+class AuthControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @MockitoBean
+    private AuthService authService;
+
+    @Test
+    void register_withValidPayload_returns201AndToken() throws Exception {
+        when(authService.register(any())).thenReturn(AuthResponse.bearer("token-123"));
+
+        mockMvc.perform(post("/api/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"email":"bob@example.com","password":"password123"}"""))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.accessToken").value("token-123"))
+                .andExpect(jsonPath("$.tokenType").value("Bearer"));
+    }
+
+    @Test
+    void register_withInvalidPayload_returns400WithFieldErrors() throws Exception {
+        mockMvc.perform(post("/api/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"email":"not-an-email","password":"short"}"""))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.email").exists())
+                .andExpect(jsonPath("$.fieldErrors.password").exists());
+    }
+}

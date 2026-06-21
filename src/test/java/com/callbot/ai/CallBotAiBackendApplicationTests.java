@@ -1,13 +1,12 @@
 package com.callbot.ai;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest
-class CallBotAiBackendApplicationTests {
+import com.callbot.ai.support.AbstractIntegrationTest;
 
-	@Test
-	void contextLoads() {
-	}
+class CallBotAiBackendApplicationTests extends AbstractIntegrationTest {
 
+    @Test
+    void contextLoads() {
+    }
 }
