@@ -1,0 +1,39 @@
+spring:
+  application:
+    name: call-bot-ai-backend
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/callbot?createDatabaseIfNotExist=true&serverTimezone=UTC}
+    username: ${SPRING_DATASOURCE_USERNAME:callbot}
+    password: ${SPRING_DATASOURCE_PASSWORD:callbot}
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Schema is owned by Flyway; Hibernate only validates it against the entities.
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+server:
+  port: ${SERVER_PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when-authorized
+
+logging:
+  level:
+    com.callbot.ai: ${LOG_LEVEL:INFO}

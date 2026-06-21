@@ -1,0 +1,37 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: callbot-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-callbot}
+      MYSQL_USER: ${MYSQL_USER:-callbot}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-callbot}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  app:
+    build: .
+    container_name: callbot-app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-callbot}?serverTimezone=UTC
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-callbot}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-callbot}
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+
+volumes:
+  mysql-data:
