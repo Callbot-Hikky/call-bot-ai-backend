@@ -3,7 +3,7 @@ spring:
     name: call-bot-ai-backend
 
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/callbot?createDatabaseIfNotExist=true&serverTimezone=UTC}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/callbot}
     username: ${SPRING_DATASOURCE_USERNAME:callbot}
     password: ${SPRING_DATASOURCE_PASSWORD:callbot}
 
