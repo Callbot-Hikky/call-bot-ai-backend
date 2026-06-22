@@ -6,7 +6,7 @@ Backend Spring Boot du Call Bot AI : API REST stateless avec authentification JW
 
 - **Java 21** (LTS)
 - **Spring Boot 4.1** — Web (MVC), Data JPA, Validation, Actuator, Security
-- **MySQL 8.4**
+- **PostgreSQL 16**
 - **Flyway** pour les migrations de base de données
 - **JWT** (jjwt) pour l'authentification stateless, mots de passe hashés en **BCrypt**
 - **Maven** (via wrapper `./mvnw`)
@@ -39,7 +39,7 @@ Flux d'une requête : `controller → service → repository → model`.
 
 ## Démarrer avec Docker (recommandé)
 
-Tout (app + base MySQL) tourne dans Docker, rien à installer en local hormis Docker.
+Tout (app + base PostgreSQL) tourne dans Docker, rien à installer en local hormis Docker.
 
 ```bash
 cp .env.example .env        # adapter les valeurs si besoin
@@ -51,15 +51,15 @@ L'API est disponible sur http://localhost:8080
 - Sanity check : `GET http://localhost:8080/api/ping`
 - Santé : `GET http://localhost:8080/actuator/health`
 
-Arrêter : `docker compose down` (ajouter `-v` pour effacer les données MySQL).
+Arrêter : `docker compose down` (ajouter `-v` pour effacer les données PostgreSQL).
 
 ## Démarrer en local (sans Docker)
 
-Nécessite un JDK 21 et une instance MySQL accessible. La configuration se fait
+Nécessite un JDK 21 et une instance PostgreSQL accessible. La configuration se fait
 via les variables d'environnement (valeurs par défaut dans `application.yml`) :
 
 ```bash
-export SPRING_DATASOURCE_URL="jdbc:mysql://localhost:3306/callbot?createDatabaseIfNotExist=true"
+export SPRING_DATASOURCE_URL="jdbc:postgresql://localhost:5432/callbot"
 export SPRING_DATASOURCE_USERNAME=callbot
 export SPRING_DATASOURCE_PASSWORD=callbot
 
@@ -99,7 +99,7 @@ exemples dans `.env.example`) :
 
 | Variable                     | Défaut (dev)                   | Description                          |
 |------------------------------|--------------------------------|--------------------------------------|
-| `SPRING_DATASOURCE_URL`      | `jdbc:mysql://localhost:3306/…`| URL JDBC MySQL                       |
+| `SPRING_DATASOURCE_URL`      | `jdbc:postgresql://localhost:5432/…`| URL JDBC PostgreSQL             |
 | `SPRING_DATASOURCE_USERNAME` | `callbot`                      | Utilisateur DB                       |
 | `SPRING_DATASOURCE_PASSWORD` | `callbot`                      | Mot de passe DB                      |
 | `JWT_SECRET`                 | valeur de dev                  | Secret de signature (min. 32 octets) |
@@ -112,7 +112,7 @@ exemples dans `.env.example`) :
 ## Tests
 
 La suite couvre trois niveaux : unitaire (Mockito), web slice (`@WebMvcTest`)
-et intégration sur un **vrai MySQL** via Testcontainers (nécessite Docker).
+et intégration sur un **vrai PostgreSQL** via Testcontainers (nécessite Docker).
 
 Avec un JDK 21 installé :
 
