@@ -10,8 +10,10 @@ import com.callbot.ai.dto.AuthResponse;
 import com.callbot.ai.dto.LoginRequest;
 import com.callbot.ai.dto.RegisterRequest;
 import com.callbot.ai.exception.EmailAlreadyUsedException;
+import com.callbot.ai.model.Organization;
 import com.callbot.ai.model.Role;
 import com.callbot.ai.model.User;
+import com.callbot.ai.repository.OrganizationRepository;
 import com.callbot.ai.repository.UserRepository;
 import com.callbot.ai.security.JwtService;
 
@@ -22,6 +24,7 @@ import lombok.RequiredArgsConstructor;
 public class AuthService {
 
     private final UserRepository userRepository;
+    private final OrganizationRepository organizationRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
@@ -32,10 +35,16 @@ public class AuthService {
             throw new EmailAlreadyUsedException(request.email());
         }
 
+        // A new sign-up owns a fresh organization; the registrant becomes its owner.
+        // The organization name is a placeholder until an onboarding step sets it.
+        Organization organization = organizationRepository.save(
+                Organization.builder().name(request.email()).build());
+
         User user = User.builder()
+                .organizationId(organization.getId())
                 .email(request.email())
-                .password(passwordEncoder.encode(request.password()))
-                .role(Role.USER)
+                .passwordHash(passwordEncoder.encode(request.password()))
+                .role(Role.OWNER)
                 .build();
         userRepository.save(user);
 

@@ -5,8 +5,6 @@ import java.util.UUID;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -20,45 +18,58 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "users")
+@Table(name = "reservations")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class User {
+public class Reservation {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "organization_id", nullable = false)
-    private UUID organizationId;
+    @Column(name = "restaurant_id", nullable = false)
+    private UUID restaurantId;
 
-    @Column(nullable = false, unique = true)
-    private String email;
+    @Column(name = "customer_id")
+    private UUID customerId;
 
-    @Column(name = "password_hash", nullable = false)
-    private String passwordHash;
+    @Column(name = "table_id")
+    private UUID tableId;
 
-    @Column(name = "first_name")
-    private String firstName;
+    @Column(name = "call_id")
+    private UUID callId;
 
-    @Column(name = "last_name")
-    private String lastName;
+    @Column(name = "starts_at", nullable = false)
+    private OffsetDateTime startsAt;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 32)
-    private Role role;
+    @Column(name = "ends_at", nullable = false)
+    private OffsetDateTime endsAt;
 
-    @Column(name = "last_login_at")
-    private OffsetDateTime lastLoginAt;
+    @Column(name = "party_size", nullable = false)
+    private Integer partySize;
+
+    @Builder.Default
+    @Column(nullable = false)
+    private String status = "pending";
+
+    @Builder.Default
+    @Column(nullable = false)
+    private String source = "callbot";
+
+    @Column(columnDefinition = "text")
+    private String notes;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    @Column(name = "cancelled_at")
+    private OffsetDateTime cancelledAt;
 
     @PrePersist
     void onCreate() {

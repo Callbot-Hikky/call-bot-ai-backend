@@ -18,12 +18,16 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.util.UUID;
+
 import com.callbot.ai.dto.AuthResponse;
 import com.callbot.ai.dto.LoginRequest;
 import com.callbot.ai.dto.RegisterRequest;
 import com.callbot.ai.exception.EmailAlreadyUsedException;
+import com.callbot.ai.model.Organization;
 import com.callbot.ai.model.Role;
 import com.callbot.ai.model.User;
+import com.callbot.ai.repository.OrganizationRepository;
 import com.callbot.ai.repository.UserRepository;
 import com.callbot.ai.security.JwtService;
 
@@ -32,6 +36,8 @@ class AuthServiceTest {
 
     @Mock
     private UserRepository userRepository;
+    @Mock
+    private OrganizationRepository organizationRepository;
     @Mock
     private PasswordEncoder passwordEncoder;
     @Mock
@@ -43,9 +49,15 @@ class AuthServiceTest {
     private AuthService authService;
 
     @Test
-    void register_persistsHashedUserAndReturnsToken() {
+    void register_persistsHashedOwnerWithOrganizationAndReturnsToken() {
         RegisterRequest request = new RegisterRequest("bob@example.com", "password123");
+        UUID organizationId = UUID.randomUUID();
         when(userRepository.existsByEmail("bob@example.com")).thenReturn(false);
+        when(organizationRepository.save(any())).thenAnswer(invocation -> {
+            Organization organization = invocation.getArgument(0);
+            organization.setId(organizationId);
+            return organization;
+        });
         when(passwordEncoder.encode("password123")).thenReturn("hashed-password");
         when(jwtService.generateToken("bob@example.com")).thenReturn("token-123");
 
@@ -58,8 +70,9 @@ class AuthServiceTest {
         verify(userRepository).save(captor.capture());
         User saved = captor.getValue();
         assertThat(saved.getEmail()).isEqualTo("bob@example.com");
-        assertThat(saved.getPassword()).isEqualTo("hashed-password");
-        assertThat(saved.getRole()).isEqualTo(Role.USER);
+        assertThat(saved.getPasswordHash()).isEqualTo("hashed-password");
+        assertThat(saved.getRole()).isEqualTo(Role.OWNER);
+        assertThat(saved.getOrganizationId()).isEqualTo(organizationId);
     }
 
     @Test
@@ -70,6 +83,7 @@ class AuthServiceTest {
                 .isInstanceOf(EmailAlreadyUsedException.class);
 
         verify(userRepository, never()).save(any());
+        verify(organizationRepository, never()).save(any());
     }
 
     @Test
