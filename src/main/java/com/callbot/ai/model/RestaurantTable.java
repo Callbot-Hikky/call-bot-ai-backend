@@ -5,8 +5,6 @@ import java.util.UUID;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -19,40 +17,34 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+/** A physical table in a restaurant's floor plan (DB table "tables"). */
 @Entity
-@Table(name = "users")
+@Table(name = "tables")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class User {
+public class RestaurantTable {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "organization_id", nullable = false)
-    private UUID organizationId;
+    @Column(name = "restaurant_id", nullable = false)
+    private UUID restaurantId;
 
-    @Column(nullable = false, unique = true)
-    private String email;
+    @Column(nullable = false)
+    private String name;
 
-    @Column(name = "password_hash", nullable = false)
-    private String passwordHash;
+    @Column(nullable = false)
+    private Integer capacity;
 
-    @Column(name = "first_name")
-    private String firstName;
+    private String zone;
 
-    @Column(name = "last_name")
-    private String lastName;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 32)
-    private Role role;
-
-    @Column(name = "last_login_at")
-    private OffsetDateTime lastLoginAt;
+    @Builder.Default
+    @Column(name = "is_active", nullable = false)
+    private Boolean isActive = true;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

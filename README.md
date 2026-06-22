@@ -24,7 +24,7 @@ src/main/java/com/callbot/ai
 ├── controller/                        # AuthController · MeController · PingController
 ├── service/                           # AuthService (logique métier)
 ├── repository/                        # UserRepository (accès données)
-├── model/                             # User · Role (entités JPA)
+├── model/                             # Organization · User · Role (entités JPA)
 ├── dto/                               # RegisterRequest · LoginRequest · AuthResponse · ApiError
 ├── exception/                         # EmailAlreadyUsedException · GlobalExceptionHandler
 ├── security/                          # JwtService · JwtAuthenticationFilter · AppUserDetailsService
