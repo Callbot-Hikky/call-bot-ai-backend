@@ -1,7 +1,10 @@
 package com.callbot.ai.controller;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -36,13 +39,27 @@ public class ReservationController {
     }
 
     @GetMapping
-    public List<ReservationResponse> list(@RequestParam(required = false) UUID restaurantId) {
-        return reservationService.list(restaurantId);
+    public List<ReservationResponse> list(@RequestParam(required = false) UUID restaurantId,
+            @RequestParam(required = false) String expand) {
+        return reservationService.list(restaurantId, parseExpand(expand));
     }
 
     @GetMapping("/{id}")
-    public ReservationResponse get(@PathVariable UUID id) {
-        return reservationService.get(id);
+    public ReservationResponse get(@PathVariable UUID id,
+            @RequestParam(required = false) String expand) {
+        return reservationService.get(id, parseExpand(expand));
+    }
+
+    /** Transforme "table,customer" en un ensemble de noms d'objets à imbriquer. */
+    private Set<String> parseExpand(String expand) {
+        if (expand == null || expand.isBlank()) {
+            return Set.of();
+        }
+        return Arrays.stream(expand.split(","))
+                .map(String::trim)
+                .map(String::toLowerCase)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toSet());
     }
 
     @PutMapping("/{id}")

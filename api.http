@@ -1,0 +1,287 @@
+### Call Bot AI — requêtes de test (extension VSCode "REST Client" / humao.rest-client)
+### Lance d'abord l'app : docker compose up -d --build
+### Clique sur "Send Request" au-dessus de chaque bloc.
+### Lance "register" puis "login" en premier : leurs réponses sont réutilisées ensuite.
+### Les ids sont chaînés automatiquement (createRestaurant -> createTable -> ...),
+### donc envoie les requêtes "create" dans l'ordre avant de tester list/get/update/delete.
+
+@host = http://localhost:8080
+
+### Ping (public, pas de token)
+GET {{host}}/api/ping
+
+### Inscription — crée un utilisateur + une organisation, renvoie un JWT
+# @name register
+POST {{host}}/api/auth/register
+Content-Type: application/json
+
+{
+  "email": "owner@example.com",
+  "password": "password123"
+}
+
+### Connexion — renvoie un JWT (réutilisé via {{login.response.body.$.accessToken}})
+# @name login
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "owner@example.com",
+  "password": "password123"
+}
+
+### Utilisateur courant (protégé)
+GET {{host}}/api/me
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+
+### ───────────────────────── ORGANISATION ─────────────────────────
+### ⚠️ Pas encore d'endpoint pour lister les organisations.
+### Récupère l'UUID dans DBeaver :  SELECT id FROM organizations;
+### puis colle-le ici :
+@organizationId = add4c389-6f15-440f-be58-a168179c7a82
+
+
+### ───────────────────────── RESTAURANTS ─────────────────────────
+
+### Créer un restaurant
+# @name createRestaurant
+POST {{host}}/api/restaurants
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "organizationId": "{{organizationId}}",
+  "name": "Chez Test 2",
+  "phoneNumber": "+33100000011",
+  "city": "Paris"
+}
+
+### Lister tous les restaurants
+GET {{host}}/api/restaurants
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Lister les restaurants d'une organisation
+GET {{host}}/api/restaurants?organizationId={{organizationId}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Récupérer un restaurant par id
+GET {{host}}/api/restaurants/{{createRestaurant.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Modifier un restaurant
+PUT {{host}}/api/restaurants/{{createRestaurant.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "organizationId": "{{organizationId}}",
+  "name": "Chez Test (modifié)",
+  "phoneNumber": "+33100000001",
+  "city": "Lyon"
+}
+
+### Supprimer un restaurant
+DELETE {{host}}/api/restaurants/{{createRestaurant.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+
+### ───────────────────────── TABLES ─────────────────────────
+
+### Créer une table
+# @name createTable
+POST {{host}}/api/tables
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "restaurantId": "{{createRestaurant.response.body.$.id}}",
+  "name": "T1",
+  "capacity": 4
+}
+
+### Lister toutes les tables
+GET {{host}}/api/tables
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Lister les tables d'un restaurant
+GET {{host}}/api/tables?restaurantId={{createRestaurant.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Récupérer une table par id
+GET {{host}}/api/tables/{{createTable.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Modifier une table
+PUT {{host}}/api/tables/{{createTable.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "restaurantId": "{{createRestaurant.response.body.$.id}}",
+  "name": "T1",
+  "capacity": 6,
+  "zone": "terrasse"
+}
+
+### Supprimer une table
+DELETE {{host}}/api/tables/{{createTable.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+
+### ───────────────────────── HORAIRES ─────────────────────────
+
+### Définir des horaires
+# @name createHours
+POST {{host}}/api/restaurant-hours
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "restaurantId": "{{createRestaurant.response.body.$.id}}",
+  "dayOfWeek": 5,
+  "service": "dinner",
+  "opensAt": "19:00",
+  "closesAt": "23:00"
+}
+
+### Lister tous les horaires
+GET {{host}}/api/restaurant-hours
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Lister les horaires d'un restaurant
+GET {{host}}/api/restaurant-hours?restaurantId={{createRestaurant.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Récupérer un horaire par id
+GET {{host}}/api/restaurant-hours/{{createHours.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Modifier un horaire
+PUT {{host}}/api/restaurant-hours/{{createHours.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "restaurantId": "{{createRestaurant.response.body.$.id}}",
+  "dayOfWeek": 5,
+  "service": "dinner",
+  "opensAt": "18:30",
+  "closesAt": "23:30"
+}
+
+### Supprimer un horaire
+DELETE {{host}}/api/restaurant-hours/{{createHours.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+
+### ───────────────────────── CLIENTS ─────────────────────────
+
+### Créer un client
+# @name createCustomer
+POST {{host}}/api/customers
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "restaurantId": "{{createRestaurant.response.body.$.id}}",
+  "phone": "+33600000000",
+  "firstName": "Alice"
+}
+
+### Lister tous les clients
+GET {{host}}/api/customers
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Lister les clients d'un restaurant
+GET {{host}}/api/customers?restaurantId={{createRestaurant.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Récupérer un client par id
+GET {{host}}/api/customers/{{createCustomer.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Modifier un client
+PUT {{host}}/api/customers/{{createCustomer.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "restaurantId": "{{createRestaurant.response.body.$.id}}",
+  "phone": "+33600000000",
+  "firstName": "Alice",
+  "lastName": "Martin",
+  "email": "alice@example.com"
+}
+
+### Supprimer un client
+DELETE {{host}}/api/customers/{{createCustomer.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+
+### ───────────────────────── RÉSERVATIONS ─────────────────────────
+
+### Créer une réservation
+# @name createReservation
+POST {{host}}/api/reservations
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "restaurantId": "{{createRestaurant.response.body.$.id}}",
+  "tableId": "{{createTable.response.body.$.id}}",
+  "customerId": "{{createCustomer.response.body.$.id}}",
+  "startsAt": "2030-01-01T19:00:00Z",
+  "endsAt": "2030-01-01T21:00:00Z",
+  "partySize": 2
+}
+
+### Réservation qui chevauche la même table → doit renvoyer 409 (contrainte EXCLUDE)
+POST {{host}}/api/reservations
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "restaurantId": "{{createRestaurant.response.body.$.id}}",
+  "tableId": "{{createTable.response.body.$.id}}",
+  "startsAt": "2030-01-01T20:00:00Z",
+  "endsAt": "2030-01-01T22:00:00Z",
+  "partySize": 2
+}
+
+### Lister toutes les réservations
+GET {{host}}/api/reservations
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Lister les réservations d'un restaurant
+GET {{host}}/api/reservations?restaurantId={{createRestaurant.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Récupérer une réservation par id
+GET {{host}}/api/reservations/{{createReservation.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Récupérer une réservation AVEC les objets liés (table + client imbriqués)
+GET {{host}}/api/reservations/{{createReservation.response.body.$.id}}?expand=table,customer
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Lister les réservations d'un restaurant, table imbriquée uniquement
+GET {{host}}/api/reservations?restaurantId={{createRestaurant.response.body.$.id}}&expand=table
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
+### Modifier une réservation
+PUT {{host}}/api/reservations/{{createReservation.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "restaurantId": "{{createRestaurant.response.body.$.id}}",
+  "tableId": "{{createTable.response.body.$.id}}",
+  "startsAt": "2030-01-01T19:30:00Z",
+  "endsAt": "2030-01-01T21:30:00Z",
+  "partySize": 4
+}
+
+### Supprimer une réservation
+DELETE {{host}}/api/reservations/{{createReservation.response.body.$.id}}
+Authorization: Bearer {{login.response.body.$.accessToken}}

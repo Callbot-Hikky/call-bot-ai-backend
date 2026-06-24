@@ -114,6 +114,70 @@ class RestaurantCrudIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isConflict());
     }
 
+    @Test
+    void reservationExpandsTableAndCustomerOnDemand() throws Exception {
+        String token = registerAndGetToken("owner-expand@example.com");
+        UUID organizationId = organizationRepository.save(
+                Organization.builder().name("Expand Org").build()).getId();
+
+        String restaurant = mockMvc.perform(post("/api/restaurants")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"organizationId":"%s","name":"Expand Resto","phoneNumber":"+33100000003"}"""
+                        .formatted(organizationId)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String restaurantId = JsonPath.read(restaurant, "$.id");
+
+        String table = mockMvc.perform(post("/api/tables")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"restaurantId":"%s","name":"T7","capacity":4}""".formatted(restaurantId)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String tableId = JsonPath.read(table, "$.id");
+
+        String customer = mockMvc.perform(post("/api/customers")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"restaurantId":"%s","phone":"+33600000000","firstName":"Alice"}"""
+                        .formatted(restaurantId)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String customerId = JsonPath.read(customer, "$.id");
+
+        String reservation = mockMvc.perform(post("/api/reservations")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"restaurantId":"%s","tableId":"%s","customerId":"%s",
+                         "startsAt":"2030-02-01T19:00:00Z","endsAt":"2030-02-01T21:00:00Z","partySize":2}"""
+                        .formatted(restaurantId, tableId, customerId)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String reservationId = JsonPath.read(reservation, "$.id");
+
+        // Sans expand : seulement les ids, pas d'objets imbriqués.
+        mockMvc.perform(get("/api/reservations/" + reservationId)
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tableId").value(tableId))
+                .andExpect(jsonPath("$.table").doesNotExist())
+                .andExpect(jsonPath("$.customer").doesNotExist());
+
+        // Avec expand : les objets liés sont imbriqués dans la réponse.
+        mockMvc.perform(get("/api/reservations/" + reservationId + "?expand=table,customer")
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.table.id").value(tableId))
+                .andExpect(jsonPath("$.table.name").value("T7"))
+                .andExpect(jsonPath("$.customer.id").value(customerId))
+                .andExpect(jsonPath("$.customer.firstName").value("Alice"));
+    }
+
     private String registerAndGetToken(String email) throws Exception {
         String response = mockMvc.perform(post("/api/auth/register")
                 .contentType(MediaType.APPLICATION_JSON)

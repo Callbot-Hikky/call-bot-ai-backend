@@ -44,7 +44,7 @@ class ReservationControllerTest {
                 OffsetDateTime.parse("2030-01-01T19:00:00Z"),
                 OffsetDateTime.parse("2030-01-01T21:00:00Z"),
                 2, "pending", "callbot", null,
-                OffsetDateTime.now(), OffsetDateTime.now(), null);
+                OffsetDateTime.now(), OffsetDateTime.now(), null, null, null);
     }
 
     @Test
@@ -71,7 +71,7 @@ class ReservationControllerTest {
 
     @Test
     void get_returns200() throws Exception {
-        when(reservationService.get(any())).thenReturn(sample());
+        when(reservationService.get(any(), any())).thenReturn(sample());
 
         mockMvc.perform(get("/api/reservations/" + UUID.randomUUID()))
                 .andExpect(status().isOk())
@@ -80,7 +80,7 @@ class ReservationControllerTest {
 
     @Test
     void get_whenNotFound_returns404() throws Exception {
-        when(reservationService.get(any()))
+        when(reservationService.get(any(), any()))
                 .thenThrow(new ResourceNotFoundException("Reservation", UUID.randomUUID()));
 
         mockMvc.perform(get("/api/reservations/" + UUID.randomUUID()))

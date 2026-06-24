@@ -1,17 +1,22 @@
 package com.callbot.ai.service;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.callbot.ai.dto.CustomerResponse;
 import com.callbot.ai.dto.ReservationRequest;
 import com.callbot.ai.dto.ReservationResponse;
+import com.callbot.ai.dto.RestaurantTableResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.model.Reservation;
+import com.callbot.ai.repository.CustomerRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
+import com.callbot.ai.repository.RestaurantTableRepository;
 
 import lombok.RequiredArgsConstructor;
 
@@ -22,6 +27,8 @@ public class ReservationService {
 
     private final ReservationRepository reservationRepository;
     private final RestaurantRepository restaurantRepository;
+    private final RestaurantTableRepository tableRepository;
+    private final CustomerRepository customerRepository;
 
     public ReservationResponse create(ReservationRequest request) {
         requireRestaurant(request.restaurantId());
@@ -41,16 +48,16 @@ public class ReservationService {
     }
 
     @Transactional(readOnly = true)
-    public List<ReservationResponse> list(UUID restaurantId) {
+    public List<ReservationResponse> list(UUID restaurantId, Set<String> expand) {
         List<Reservation> reservations = restaurantId != null
                 ? reservationRepository.findByRestaurantId(restaurantId)
                 : reservationRepository.findAll();
-        return reservations.stream().map(ReservationResponse::from).toList();
+        return reservations.stream().map(r -> toResponse(r, expand)).toList();
     }
 
     @Transactional(readOnly = true)
-    public ReservationResponse get(UUID id) {
-        return ReservationResponse.from(find(id));
+    public ReservationResponse get(UUID id, Set<String> expand) {
+        return toResponse(find(id), expand);
     }
 
     public ReservationResponse update(UUID id, ReservationRequest request) {
@@ -76,6 +83,27 @@ public class ReservationService {
             throw new ResourceNotFoundException("Reservation", id);
         }
         reservationRepository.deleteById(id);
+    }
+
+    /**
+     * Construit la réponse en imbriquant les objets liés demandés via ?expand=.
+     * Sans expand (ou pour un lien null), les champs table/customer restent null
+     * et sont omis du JSON.
+     */
+    private ReservationResponse toResponse(Reservation reservation, Set<String> expand) {
+        RestaurantTableResponse table = null;
+        CustomerResponse customer = null;
+        if (expand.contains("table") && reservation.getTableId() != null) {
+            table = tableRepository.findById(reservation.getTableId())
+                    .map(RestaurantTableResponse::from)
+                    .orElse(null);
+        }
+        if (expand.contains("customer") && reservation.getCustomerId() != null) {
+            customer = customerRepository.findById(reservation.getCustomerId())
+                    .map(CustomerResponse::from)
+                    .orElse(null);
+        }
+        return ReservationResponse.from(reservation, table, customer);
     }
 
     private Reservation find(UUID id) {
