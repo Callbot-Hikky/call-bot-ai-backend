@@ -160,7 +160,7 @@ class RestaurantCrudIntegrationTest extends AbstractIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         String reservationId = JsonPath.read(reservation, "$.id");
 
-        // Sans expand : seulement les ids, pas d'objets imbriqués.
+        // Without expand: only ids, no nested objects.
         mockMvc.perform(get("/api/reservations/" + reservationId)
                 .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
@@ -168,7 +168,7 @@ class RestaurantCrudIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.table").doesNotExist())
                 .andExpect(jsonPath("$.customer").doesNotExist());
 
-        // Avec expand : les objets liés sont imbriqués dans la réponse.
+        // With expand: the related objects are nested in the response.
         mockMvc.perform(get("/api/reservations/" + reservationId + "?expand=table,customer")
                 .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
