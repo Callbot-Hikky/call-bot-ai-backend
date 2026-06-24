@@ -53,6 +53,32 @@ L'API est disponible sur http://localhost:8080
 
 Arrêter : `docker compose down` (ajouter `-v` pour effacer les données PostgreSQL).
 
+> Avec `docker-compose.yml`, l'image embarque un jar figé : **chaque** changement de
+> code impose un `docker compose up --build`. Pour du dev itératif, préfère le mode
+> hot-reload ci-dessous.
+
+## Développement avec hot-reload automatique
+
+`docker-compose.dev.yml` monte le code source et lance l'app via Maven. Un watcher
+(`inotify`) recompile à chaque sauvegarde de fichier, et **Spring Boot DevTools**
+redémarre l'app. **Tu ne lances rien après une modif : tu sauvegardes, c'est tout.**
+
+```bash
+# Démarrer la stack de dev (app + PostgreSQL) — le 1er run build l'image dev
+docker compose -f docker-compose.dev.yml up
+```
+
+Édite ton code, sauvegarde → l'app est à jour en ~1-2 s. On passe d'un cycle de
+~40 s (rebuild d'image) à quelques secondes, sans aucune commande manuelle.
+
+Détails :
+- Le premier démarrage build l'image dev (`Dockerfile.dev`, contient JDK + inotify)
+  et télécharge les dépendances Maven (mises en cache dans un volume). Ce build est
+  ponctuel : il ne se relance pas à chaque modif de code.
+- `target/` vit dans un volume Docker dédié (ton `target/` hôte n'est pas pollué).
+
+Réserve `docker-compose.yml` (jar packagé) à la prod / CI.
+
 ## Démarrer en local (sans Docker)
 
 Nécessite un JDK 21 et une instance PostgreSQL accessible. La configuration se fait

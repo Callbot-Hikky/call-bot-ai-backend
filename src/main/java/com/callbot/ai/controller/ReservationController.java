@@ -50,7 +50,7 @@ public class ReservationController {
         return reservationService.get(id, parseExpand(expand));
     }
 
-    /** Transforme "table,customer" en un ensemble de noms d'objets à imbriquer. */
+    /** Parses "table,customer" into the set of related resources to embed. */
     private Set<String> parseExpand(String expand) {
         if (expand == null || expand.isBlank()) {
             return Set.of();

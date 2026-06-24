@@ -86,9 +86,9 @@ public class ReservationService {
     }
 
     /**
-     * Construit la réponse en imbriquant les objets liés demandés via ?expand=.
-     * Sans expand (ou pour un lien null), les champs table/customer restent null
-     * et sont omis du JSON.
+     * Builds the response, embedding the related resources requested via ?expand=.
+     * When not expanded (or when a link is null), table/customer stay null and are
+     * omitted from the JSON.
      */
     private ReservationResponse toResponse(Reservation reservation, Set<String> expand) {
         RestaurantTableResponse table = null;
