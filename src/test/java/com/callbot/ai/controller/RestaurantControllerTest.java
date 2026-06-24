@@ -24,12 +24,13 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.callbot.ai.dto.RestaurantResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.security.JwtAuthenticationFilter;
+import com.callbot.ai.security.ServiceApiKeyFilter;
 import com.callbot.ai.service.RestaurantService;
 
 @WebMvcTest(controllers = RestaurantController.class,
         excludeFilters = @ComponentScan.Filter(
                 type = FilterType.ASSIGNABLE_TYPE,
-                classes = JwtAuthenticationFilter.class))
+                classes = {JwtAuthenticationFilter.class, ServiceApiKeyFilter.class}))
 @AutoConfigureMockMvc(addFilters = false)
 class RestaurantControllerTest {
 
