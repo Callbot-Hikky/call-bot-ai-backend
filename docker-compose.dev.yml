@@ -1,0 +1,63 @@
+# DEVELOPMENT stack with automatic hot-reload.
+#
+# The source tree is bind-mounted. A watcher (inotify) recompiles on every file
+# save, and Spring Boot DevTools restarts the app — nothing to run after a change.
+#
+# For prod / CI, use docker-compose.yml (which builds a packaged jar).
+#
+# Start:
+#   docker compose -f docker-compose.dev.yml up
+# (the first run builds the dev image and downloads dependencies)
+#
+# Note: target/ lives in a dedicated Docker volume (app-target), not the host
+# directory, to avoid polluting it with root-owned files.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: callbot-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-callbot}
+      POSTGRES_USER: ${POSTGRES_USER:-callbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-callbot}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data-dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-callbot} -d ${POSTGRES_DB:-callbot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: callbot-app-dev
+    working_dir: /app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Watcher (auto-recompile) + spring-boot:run (DevTools restarts the app).
+    command: ./scripts/dev-reload.sh
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-callbot}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-callbot}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-callbot}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me-please-32bytes-minimum-required}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-dev-service-key-change-me}
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    volumes:
+      - .:/app                  # bind-mounted source: edits are seen in the container
+      - app-target:/app/target  # isolated build output (keeps the host target/ clean)
+      - maven-repo:/root/.m2     # Maven dependency cache shared across runs
+
+volumes:
+  postgres-data-dev:
+  app-target:
+  maven-repo:

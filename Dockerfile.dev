@@ -1,0 +1,15 @@
+# syntax=docker/dockerfile:1
+#
+# Development-only image (used by docker-compose.dev.yml):
+# JDK 21 + inotify-tools, to recompile automatically on source changes.
+#
+# This build is one-off and cached: it does not rerun on code changes, only when
+# this file changes. Production uses the main Dockerfile.
+
+FROM eclipse-temurin:21-jdk-jammy
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends inotify-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
