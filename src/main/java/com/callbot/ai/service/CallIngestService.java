@@ -1,0 +1,111 @@
+package com.callbot.ai.service;
+
+import java.util.Optional;
+import java.util.UUID;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.callbot.ai.dto.CallIngestRequest;
+import com.callbot.ai.dto.CallIngestRequest.Booking;
+import com.callbot.ai.dto.CallIngestRequest.Caller;
+import com.callbot.ai.dto.CallIngestResponse;
+import com.callbot.ai.dto.ReservationResponse;
+import com.callbot.ai.exception.ResourceNotFoundException;
+import com.callbot.ai.model.Call;
+import com.callbot.ai.model.Customer;
+import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.Restaurant;
+import com.callbot.ai.repository.CallRepository;
+import com.callbot.ai.repository.CustomerRepository;
+import com.callbot.ai.repository.ReservationRepository;
+import com.callbot.ai.repository.RestaurantRepository;
+
+import lombok.RequiredArgsConstructor;
+
+/**
+ * Entry point used by the AI microservice to persist the outcome of a call:
+ * resolves the restaurant, matches or creates the customer, then creates the call
+ * and the reservation — all in a single transaction.
+ *
+ * <p>Idempotent on {@code twilioCallSid}: an already-ingested call is not
+ * recreated, the existing reservation is returned. Double-booking of a table is
+ * prevented by the EXCLUDE constraint in the database (→ 409 via the global
+ * exception handler).
+ */
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class CallIngestService {
+
+    private final RestaurantRepository restaurantRepository;
+    private final CustomerRepository customerRepository;
+    private final CallRepository callRepository;
+    private final ReservationRepository reservationRepository;
+
+    public CallIngestResponse ingest(CallIngestRequest request) {
+        Optional<Call> alreadyIngested = callRepository.findByTwilioCallSid(request.twilioCallSid());
+        if (alreadyIngested.isPresent()) {
+            Call call = alreadyIngested.get();
+            ReservationResponse reservation = reservationRepository.findByCallId(call.getId())
+                    .map(ReservationResponse::from)
+                    .orElse(null);
+            return new CallIngestResponse(call.getId(), call.getCustomerId(), reservation, true);
+        }
+
+        Restaurant restaurant = restaurantRepository.findByPhoneNumber(request.restaurantPhone())
+                .orElseThrow(() -> new ResourceNotFoundException("Restaurant", request.restaurantPhone()));
+
+        Customer customer = upsertCustomer(restaurant.getId(), request.customer());
+
+        Call call = callRepository.save(Call.builder()
+                .restaurantId(restaurant.getId())
+                .customerId(customer.getId())
+                .twilioCallSid(request.twilioCallSid())
+                .fromNumber(request.fromNumber())
+                .toNumber(request.restaurantPhone())
+                .direction("inbound")
+                .status("completed")
+                .outcome("reservation_created")
+                .captured(true)
+                .build());
+
+        Booking booking = request.reservation();
+        Reservation reservation = reservationRepository.save(Reservation.builder()
+                .restaurantId(restaurant.getId())
+                .customerId(customer.getId())
+                .tableId(booking.tableId())
+                .callId(call.getId())
+                .startsAt(booking.startsAt())
+                .endsAt(booking.endsAt())
+                .partySize(booking.partySize())
+                .source("callbot")
+                .notes(booking.notes())
+                .build());
+
+        return new CallIngestResponse(call.getId(), customer.getId(),
+                ReservationResponse.from(reservation), false);
+    }
+
+    /**
+     * Finds the customer by (restaurant, phone) or creates one. Name/email fields
+     * are only updated when provided, to avoid overwriting existing data with null.
+     */
+    private Customer upsertCustomer(UUID restaurantId, Caller caller) {
+        Customer customer = customerRepository.findByRestaurantIdAndPhone(restaurantId, caller.phone())
+                .orElseGet(() -> Customer.builder()
+                        .restaurantId(restaurantId)
+                        .phone(caller.phone())
+                        .build());
+        if (caller.firstName() != null) {
+            customer.setFirstName(caller.firstName());
+        }
+        if (caller.lastName() != null) {
+            customer.setLastName(caller.lastName());
+        }
+        if (caller.email() != null) {
+            customer.setEmail(caller.email());
+        }
+        return customerRepository.save(customer);
+    }
+}

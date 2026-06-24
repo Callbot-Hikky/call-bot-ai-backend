@@ -21,8 +21,8 @@ public record ReservationResponse(
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
         OffsetDateTime cancelledAt,
-        // Objets liés, présents uniquement avec ?expand=table / ?expand=customer.
-        // Omis du JSON quand null (donc absents par défaut).
+        // Related resources, populated only via ?expand=table / ?expand=customer.
+        // Omitted from the JSON when null (absent by default).
         @JsonInclude(JsonInclude.Include.NON_NULL) RestaurantTableResponse table,
         @JsonInclude(JsonInclude.Include.NON_NULL) CustomerResponse customer) {
 
