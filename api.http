@@ -30,16 +30,16 @@ Content-Type: application/json
   "password": "password123"
 }
 
-### Utilisateur courant (protégé)
+### Utilisateur courant (protégé) — renvoie aussi ton organizationId
+### "register" crée déjà une organisation pour toi ; pas besoin d'en créer une.
+### Lance cette requête après "login" : son organizationId est réutilisé ci-dessous.
+# @name me
 GET {{host}}/api/me
 Authorization: Bearer {{login.response.body.$.accessToken}}
 
 
-### ───────────────────────── ORGANISATION ─────────────────────────
-### ⚠️ Pas encore d'endpoint pour lister les organisations.
-### Récupère l'UUID dans DBeaver :  SELECT id FROM organizations;
-### puis colle-le ici :
-@organizationId = add4c389-6f15-440f-be58-a168179c7a82
+### Clé API du micro-service IA (doit correspondre à SERVICE_API_KEY de l'app)
+@serviceApiKey = dev-service-key-change-me
 
 
 ### ───────────────────────── RESTAURANTS ─────────────────────────
@@ -51,9 +51,9 @@ Authorization: Bearer {{login.response.body.$.accessToken}}
 Content-Type: application/json
 
 {
-  "organizationId": "{{organizationId}}",
+  "organizationId": "{{me.response.body.$.organizationId}}",
   "name": "Chez Test 2",
-  "phoneNumber": "+33100000011",
+  "phoneNumber": "+33611112222",
   "city": "Paris"
 }
 
@@ -62,7 +62,7 @@ GET {{host}}/api/restaurants
 Authorization: Bearer {{login.response.body.$.accessToken}}
 
 ### Lister les restaurants d'une organisation
-GET {{host}}/api/restaurants?organizationId={{organizationId}}
+GET {{host}}/api/restaurants?organizationId={{me.response.body.$.organizationId}}
 Authorization: Bearer {{login.response.body.$.accessToken}}
 
 ### Récupérer un restaurant par id
@@ -75,7 +75,7 @@ Authorization: Bearer {{login.response.body.$.accessToken}}
 Content-Type: application/json
 
 {
-  "organizationId": "{{organizationId}}",
+  "organizationId": "{{me.response.body.$.organizationId}}",
   "name": "Chez Test (modifié)",
   "phoneNumber": "+33100000001",
   "city": "Lyon"
@@ -285,3 +285,45 @@ Content-Type: application/json
 ### Supprimer une réservation
 DELETE {{host}}/api/reservations/{{createReservation.response.body.$.id}}
 Authorization: Bearer {{login.response.body.$.accessToken}}
+
+
+### ──────────────── INGESTION APPEL (micro-service IA) ────────────────
+### Auth par clé API (X-Api-Key), PAS par JWT. Le restaurant est retrouvé par son numéro.
+### "restaurantPhone" doit correspondre au phoneNumber d'un restaurant existant.
+### Ici on le chaîne depuis createRestaurant (lance createRestaurant d'abord).
+
+### Ingestion d'un appel → crée client + appel + réservation en une transaction
+POST {{host}}/api/calls/ingest
+X-Api-Key: {{serviceApiKey}}
+Content-Type: application/json
+
+{
+  "twilioCallSid": "CA-demo-0001",
+  "restaurantPhone": "{{createRestaurant.response.body.$.phoneNumber}}",
+  "fromNumber": "+33700000000",
+  "customer": {
+    "phone": "+33700000000",
+    "firstName": "Alice"
+  },
+  "reservation": {
+    "startsAt": "2030-04-01T19:00:00Z",
+    "endsAt": "2030-04-01T21:00:00Z",
+    "partySize": 2
+  }
+}
+
+### Rejouer le MÊME twilioCallSid → idempotent : "alreadyProcessed": true, même réservation
+POST {{host}}/api/calls/ingest
+X-Api-Key: {{serviceApiKey}}
+Content-Type: application/json
+
+{
+  "twilioCallSid": "CA-demo-0001",
+  "restaurantPhone": "{{createRestaurant.response.body.$.phoneNumber}}",
+  "customer": { "phone": "+33700000000", "firstName": "Alice" },
+  "reservation": {
+    "startsAt": "2030-04-01T19:00:00Z",
+    "endsAt": "2030-04-01T21:00:00Z",
+    "partySize": 2
+  }
+}

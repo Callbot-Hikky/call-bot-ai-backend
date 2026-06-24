@@ -31,6 +31,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-callbot}
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me-please-32bytes-minimum-required}
       JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-dev-service-key-change-me}
     ports:
       - "${SERVER_PORT:-8080}:8080"
 
