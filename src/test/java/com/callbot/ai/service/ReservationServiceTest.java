@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -21,8 +22,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import com.callbot.ai.dto.ReservationRequest;
 import com.callbot.ai.dto.ReservationResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
+import com.callbot.ai.repository.CustomerRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
+import com.callbot.ai.repository.RestaurantTableRepository;
 
 @ExtendWith(MockitoExtension.class)
 class ReservationServiceTest {
@@ -31,6 +34,10 @@ class ReservationServiceTest {
     private ReservationRepository reservationRepository;
     @Mock
     private RestaurantRepository restaurantRepository;
+    @Mock
+    private RestaurantTableRepository tableRepository;
+    @Mock
+    private CustomerRepository customerRepository;
     @InjectMocks
     private ReservationService reservationService;
 
@@ -69,7 +76,7 @@ class ReservationServiceTest {
         UUID id = UUID.randomUUID();
         when(reservationRepository.findById(id)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> reservationService.get(id))
+        assertThatThrownBy(() -> reservationService.get(id, Set.of()))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
@@ -87,7 +94,7 @@ class ReservationServiceTest {
     void list_withRestaurantId_filters() {
         when(reservationRepository.findByRestaurantId(restaurantId)).thenReturn(List.of());
 
-        reservationService.list(restaurantId);
+        reservationService.list(restaurantId, Set.of());
 
         verify(reservationRepository).findByRestaurantId(restaurantId);
         verify(reservationRepository, never()).findAll();
