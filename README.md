@@ -1,6 +1,9 @@
 # Call Bot AI Backend
 
-Backend Spring Boot du Call Bot AI : API REST stateless avec authentification JWT.
+Backend Spring Boot du Call Bot AI : API REST stateless qui gère les restaurants,
+les clients et les réservations, et qui reçoit les réservations créées
+automatiquement par le bot téléphonique IA. Authentification JWT pour les
+utilisateurs, clé d'API de service pour l'IA.
 
 ## Stack
 
@@ -21,14 +24,16 @@ classes par rôle technique.
 ```
 src/main/java/com/callbot/ai
 ├── CallBotAiBackendApplication.java   # Point d'entrée
-├── controller/                        # AuthController · MeController · PingController
-├── service/                           # AuthService (logique métier)
-├── repository/                        # UserRepository (accès données)
-├── model/                             # Organization · User · Role (entités JPA)
-├── dto/                               # RegisterRequest · LoginRequest · AuthResponse · ApiError
-├── exception/                         # EmailAlreadyUsedException · GlobalExceptionHandler
-├── security/                          # JwtService · JwtAuthenticationFilter · AppUserDetailsService
-└── config/                            # SecurityConfig · JwtProperties
+├── controller/                        # Auth · Me · Restaurant · RestaurantTable · RestaurantHours
+│                                      #   · Customer · Reservation · CallIngest · Ping
+├── service/                           # Logique métier (dont CallIngestService)
+├── repository/                        # Accès données (Spring Data JPA)
+├── model/                             # Entités JPA (Organization · User · Restaurant · Table
+│                                      #   · Customer · Call · Reservation ...)
+├── dto/                               # Objets de requête/réponse de l'API
+├── exception/                         # Exceptions métier · GlobalExceptionHandler
+├── security/                          # JWT (utilisateurs) · clé d'API de service (IA)
+└── config/                            # SecurityConfig · JwtProperties · ServiceProperties
 src/main/resources
 ├── application.yml                    # Configuration (pilotée par variables d'env)
 └── db/migration/                      # Migrations Flyway (V1__, V2__, ...)
@@ -94,16 +99,87 @@ export SPRING_DATASOURCE_PASSWORD=callbot
 
 ## API
 
+L'API distingue **deux types d'appelants** :
+- les **utilisateurs** (staff du restaurant), authentifiés par un **token JWT** (`Authorization: Bearer …`) ;
+- le **microservice IA**, authentifié par une **clé d'API de service** (`X-Api-Key`), réservée à l'ingestion d'appels.
+
+### Authentification & compte
+
 | Méthode | Endpoint             | Auth   | Description                                  |
 |---------|----------------------|--------|----------------------------------------------|
 | `POST`  | `/api/auth/register` | Non    | Crée un compte, renvoie un token JWT (201)   |
 | `POST`  | `/api/auth/login`    | Non    | Authentifie, renvoie un token JWT (200)      |
-| `GET`   | `/api/me`            | Bearer | Renvoie l'utilisateur courant                |
-| `GET`   | `/api/ping`          | Non    | Sanity check                                 |
-| `GET`   | `/actuator/health`   | Non    | État de santé                                |
+| `GET`   | `/api/me`            | Bearer | Utilisateur courant (id, email, `organizationId`, rôle) |
+
+### Ressources métier (CRUD, Bearer)
+
+Chaque ressource expose le CRUD complet : `POST` (201), `GET` liste, `GET /{id}`,
+`PUT /{id}`, `DELETE /{id}` (204).
+
+| Ressource          | Base path                | Filtre de liste            |
+|--------------------|--------------------------|----------------------------|
+| Restaurants        | `/api/restaurants`       | `?organizationId=`         |
+| Tables             | `/api/tables`            | `?restaurantId=`           |
+| Horaires           | `/api/restaurant-hours`  | `?restaurantId=`           |
+| Clients            | `/api/customers`         | `?restaurantId=`           |
+| Réservations       | `/api/reservations`      | `?restaurantId=`           |
+
+**Expansion à la demande** sur les réservations : `?expand=table,customer` enrichit
+la réponse avec les ressources liées en **un seul appel**, au lieu d'obliger le
+front à enchaîner plusieurs requêtes. Ex. `GET /api/reservations/{id}?expand=table,customer`.
+
+### Ingestion d'appel IA (clé d'API de service)
+
+| Méthode | Endpoint            | Auth        | Description                                       |
+|---------|---------------------|-------------|--------------------------------------------------|
+| `POST`  | `/api/calls/ingest` | `X-Api-Key` | Crée client + appel + réservation (201), idempotent |
+
+C'est le **point d'entrée du bot IA** : à la fin d'un appel, le microservice y
+envoie la réservation captée. Le backend, en **une seule transaction** :
+
+```
+Appel terminé (bot IA)
+        │  POST /api/calls/ingest  (X-Api-Key)
+        ▼
+1. Retrouve le restaurant via restaurantPhone (numéro appelé)   ── inconnu ─▶ 404
+2. Retrouve ou crée le client (clé : restaurant + téléphone)
+3. Enregistre l'appel (idempotent sur twilioCallSid)
+4. Crée la réservation (source = "callbot")
+        ▼
+201 { callId, customerId, reservation, alreadyProcessed }
+```
+
+**Idempotence** : si le même appel (`twilioCallSid`) est renvoyé, rien n'est
+recréé — la réservation existante est renvoyée avec `alreadyProcessed = true`.
+Cela protège contre les doublons en cas de renvoi réseau.
+
+Exemple de payload envoyé par l'IA :
+
+```json
+{
+  "twilioCallSid": "CA-abc123",
+  "restaurantPhone": "+33611112222",
+  "fromNumber": "+33700000000",
+  "customer": { "phone": "+33700000000", "firstName": "Alice" },
+  "reservation": {
+    "startsAt": "2030-03-01T19:00:00Z",
+    "endsAt": "2030-03-01T21:00:00Z",
+    "partySize": 2,
+    "notes": "Près de la fenêtre"
+  }
+}
+```
+
+### Divers
+
+| Méthode | Endpoint           | Auth | Description   |
+|---------|--------------------|------|---------------|
+| `GET`   | `/api/ping`        | Non  | Sanity check  |
+| `GET`   | `/actuator/health` | Non  | État de santé |
 
 Codes d'erreur : `400` validation (avec détail par champ), `401` identifiants
-invalides ou token manquant/invalide, `409` email déjà utilisé.
+invalides / token ou clé d'API manquant·e ou invalide, `403` accès interdit,
+`404` ressource introuvable, `409` email déjà utilisé.
 
 ### Exemple
 
