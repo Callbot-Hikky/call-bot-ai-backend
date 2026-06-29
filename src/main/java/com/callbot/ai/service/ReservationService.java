@@ -85,6 +85,12 @@ public class ReservationService {
         reservationRepository.deleteById(id);
     }
 
+    public ReservationResponse markArrived(UUID id) {
+        Reservation reservation = find(id);
+        reservation.setStatus("arrived");
+        return ReservationResponse.from(reservationRepository.save(reservation));
+    }
+
     /**
      * Builds the response, embedding the related resources requested via ?expand=.
      * When not expanded (or when a link is null), table/customer stay null and are
