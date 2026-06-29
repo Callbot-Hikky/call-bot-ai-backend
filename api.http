@@ -282,6 +282,10 @@ Content-Type: application/json
   "partySize": 4
 }
 
+### Marquer une réservation comme arrivée (client arrivé)
+PATCH {{host}}/api/reservations/{{createReservation.response.body.$.id}}/arrived
+Authorization: Bearer {{login.response.body.$.accessToken}}
+
 ### Supprimer une réservation
 DELETE {{host}}/api/reservations/{{createReservation.response.body.$.id}}
 Authorization: Bearer {{login.response.body.$.accessToken}}
