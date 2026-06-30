@@ -87,7 +87,7 @@ public class ReservationService {
 
     public ReservationResponse markArrived(UUID id) {
         Reservation reservation = find(id);
-        reservation.setStatus("arrived");
+        reservation.setStatus("seated");
         return ReservationResponse.from(reservationRepository.save(reservation));
     }
 

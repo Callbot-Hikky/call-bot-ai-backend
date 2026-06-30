@@ -1,5 +1,6 @@
 package com.callbot.ai.service;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -46,6 +47,16 @@ public class RestaurantTableService {
     @Transactional(readOnly = true)
     public RestaurantTableResponse get(UUID id) {
         return RestaurantTableResponse.from(find(id));
+    }
+
+    @Transactional(readOnly = true)
+    public List<RestaurantTableResponse> listAvailable(
+        UUID restaurantId,
+        OffsetDateTime startsAt,
+        OffsetDateTime endsAt,
+        Integer partySize
+    ) {
+        return tableRepository.findAvailable(restaurantId, startsAt, endsAt, partySize).stream().map(RestaurantTableResponse::from).toList();
     }
 
     public RestaurantTableResponse update(UUID id, RestaurantTableRequest request) {
