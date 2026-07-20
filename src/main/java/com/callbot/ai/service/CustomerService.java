@@ -49,6 +49,15 @@ public class CustomerService {
         return CustomerResponse.from(customerRepository.save(customer));
     }
 
+    // Relecture par (restaurant, phone) : sert au controller pour recuperer la
+    // fiche gagnante quand deux creations concurrentes du meme numero se croisent.
+    @Transactional(readOnly = true)
+    public CustomerResponse findByPhone(UUID restaurantId, String phone) {
+        return customerRepository.findByRestaurantIdAndPhone(restaurantId, phone)
+                .map(CustomerResponse::from)
+                .orElseThrow(() -> new ResourceNotFoundException("Customer", phone));
+    }
+
     @Transactional(readOnly = true)
     public List<CustomerResponse> list(UUID restaurantId) {
         List<Customer> customers = restaurantId != null

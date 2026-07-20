@@ -13,6 +13,7 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.ComponentScan;
@@ -49,6 +50,20 @@ class CustomerControllerTest {
     @Test
     void create_withValidPayload_returns201() throws Exception {
         when(customerService.create(any())).thenReturn(sample());
+
+        mockMvc.perform(post("/api/customers")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"restaurantId":"%s","phone":"+33600000000"}""".formatted(UUID.randomUUID())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.phone").value("+33600000000"));
+    }
+
+    @Test
+    void create_whenRaceConflict_reReadsWinner() throws Exception {
+        when(customerService.create(any()))
+                .thenThrow(new DataIntegrityViolationException("duplicate phone"));
+        when(customerService.findByPhone(any(), any())).thenReturn(sample());
 
         mockMvc.perform(post("/api/customers")
                 .contentType(MediaType.APPLICATION_JSON)
