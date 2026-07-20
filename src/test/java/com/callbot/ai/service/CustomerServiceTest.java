@@ -20,6 +20,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import com.callbot.ai.dto.CustomerRequest;
 import com.callbot.ai.dto.CustomerResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
+import com.callbot.ai.model.Customer;
 import com.callbot.ai.repository.CustomerRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 
@@ -43,6 +44,8 @@ class CustomerServiceTest {
     @Test
     void create_whenRestaurantExists_saves() {
         when(restaurantRepository.existsById(restaurantId)).thenReturn(true);
+        when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "+33600000000"))
+                .thenReturn(Optional.empty());
         when(customerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
         CustomerResponse response = customerService.create(request());
@@ -50,6 +53,26 @@ class CustomerServiceTest {
         assertThat(response.phone()).isEqualTo("+33600000000");
         assertThat(response.firstName()).isEqualTo("Alice");
         assertThat(response.email()).isEqualTo("alice@example.com");
+    }
+
+    @Test
+    void create_whenPhoneAlreadyExists_reusesExistingCustomer() {
+        Customer existing = Customer.builder()
+                .id(UUID.randomUUID())
+                .restaurantId(restaurantId)
+                .phone("+33600000000")
+                .firstName("Alice")
+                .build();
+        when(restaurantRepository.existsById(restaurantId)).thenReturn(true);
+        when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "+33600000000"))
+                .thenReturn(Optional.of(existing));
+        when(customerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        CustomerResponse response = customerService.create(request());
+
+        // Meme fiche reutilisee (pas de nouveau customer -> pas de violation d'unicite).
+        assertThat(response.id()).isEqualTo(existing.getId());
+        assertThat(response.phone()).isEqualTo("+33600000000");
     }
 
     @Test
