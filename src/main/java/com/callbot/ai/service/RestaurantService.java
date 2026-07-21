@@ -1,5 +1,6 @@
 package com.callbot.ai.service;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.UUID;
 
@@ -37,6 +38,7 @@ public class RestaurantService {
                 .timezone(request.timezone() != null ? request.timezone() : "Europe/Paris")
                 .locale(request.locale() != null ? request.locale() : "fr")
                 .isActive(request.isActive() != null ? request.isActive() : true)
+                .attributes(request.attributes() != null ? request.attributes() : new HashMap<>())
                 .build();
         return RestaurantResponse.from(restaurantRepository.save(restaurant));
     }
@@ -69,6 +71,9 @@ public class RestaurantService {
         }
         if (request.isActive() != null) {
             restaurant.setIsActive(request.isActive());
+        }
+        if (request.attributes() != null) {
+            restaurant.setAttributes(request.attributes());
         }
         return RestaurantResponse.from(restaurantRepository.save(restaurant));
     }

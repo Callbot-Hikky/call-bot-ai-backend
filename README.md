@@ -128,13 +128,78 @@ Chaque ressource expose le CRUD complet : `POST` (201), `GET` liste, `GET /{id}`
 la réponse avec les ressources liées en **un seul appel**, au lieu d'obliger le
 front à enchaîner plusieurs requêtes. Ex. `GET /api/reservations/{id}?expand=table,customer`.
 
-### Ingestion d'appel IA (clé d'API de service)
+### Endpoints réservés au bot IA (clé d'API de service)
 
-| Méthode | Endpoint            | Auth        | Description                                       |
-|---------|---------------------|-------------|--------------------------------------------------|
-| `POST`  | `/api/calls/ingest` | `X-Api-Key` | Crée client + appel + réservation (201), idempotent |
+La clé de service n'ouvre **que** ces trois routes — le bot n'a aucun accès au
+reste de l'API.
 
-C'est le **point d'entrée du bot IA** : à la fin d'un appel, le microservice y
+| Méthode | Endpoint                  | Description                                          |
+|---------|---------------------------|------------------------------------------------------|
+| `GET`   | `/api/calls/context`      | Contexte statique du restaurant, lu au décrochage    |
+| `GET`   | `/api/calls/availability` | Disponibilité d'une table à un créneau, en temps réel |
+| `POST`  | `/api/calls/ingest`       | Crée client + appel + réservation (201), idempotent  |
+
+#### Contexte d'appel
+
+```http
+GET /api/calls/context?restaurantPhone=+33611112222
+```
+
+> ⚠️ Dans une query string, `+` signifie **espace**. Le numéro doit être encodé
+> (`%2B33611112222`), sinon la recherche échoue en `404`. Les clients HTTP
+> sérieux le font automatiquement ; en `curl` brut, il faut l'écrire à la main.
+
+Appelé **une fois** quand le bot décroche. Il renvoie le restaurant, ses horaires,
+ses **spécificités** (`attributes`) et ses limites (`policies`). Le bot garde tout
+en mémoire pendant la conversation : aucune latence sur les questions du client.
+
+```json
+{
+  "restaurant": { "id": "...", "name": "Le Comptoir", "timezone": "Europe/Paris", "locale": "fr" },
+  "hours": [ { "dayOfWeek": 4, "service": "dinner", "opensAt": "19:00", "closesAt": "23:00", "isClosed": false } ],
+  "attributes": { "halal": true, "vegetarien": true, "terrasse": true, "pmr": false },
+  "policies": { "maxPartySize": 6, "defaultDurationMinutes": 90 }
+}
+```
+
+`attributes` est un **champ libre** (JSONB) que le restaurateur remplit via
+`POST`/`PUT /api/restaurants`. Il peut y déclarer ce qu'il veut sans qu'on touche
+au schéma : c'est ce qui permet au bot de répondre à « vous êtes halal ? »,
+« vous avez une terrasse ? », etc. `dayOfWeek` suit la convention 0 = lundi … 6 = dimanche.
+
+#### Disponibilité
+
+```http
+GET /api/calls/availability?restaurantPhone=+33611112222&startsAt=2030-03-01T19:00:00Z&partySize=4
+```
+
+Appelé **à chaque créneau discuté**. `endsAt` est optionnel (durée par défaut :
+90 min). Le backend croise les horaires d'ouverture, les tables actives assez
+grandes, et les réservations qui chevauchent le créneau.
+
+```json
+{
+  "available": false,
+  "reason": "no_table",
+  "tableId": null,
+  "startsAt": "2030-03-01T19:00:00Z",
+  "endsAt": "2030-03-01T20:30:00Z",
+  "partySize": 4,
+  "alternatives": [
+    { "startsAt": "2030-03-01T19:30:00Z", "endsAt": "2030-03-01T21:00:00Z", "tableId": "...", "capacity": 4 },
+    { "startsAt": "2030-03-01T20:00:00Z", "endsAt": "2030-03-01T21:30:00Z", "tableId": "...", "capacity": 6 }
+  ]
+}
+```
+
+`reason` vaut `"closed"` (hors horaires) ou `"no_table"`. Le champ
+`alternatives` est essentiel : il permet au bot de **contre-proposer** un créneau
+au lieu de simplement refuser. La plus petite table capable d'accueillir le
+groupe est choisie en priorité, pour garder les grandes tables libres.
+
+#### Ingestion de l'appel
+
+C'est le **seul point d'écriture** du bot IA : à la fin d'un appel, le microservice y
 envoie la réservation captée. Le backend, en **une seule transaction** :
 
 ```

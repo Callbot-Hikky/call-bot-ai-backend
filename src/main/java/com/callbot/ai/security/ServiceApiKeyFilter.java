@@ -20,12 +20,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 
 /**
- * Authenticates machine-to-machine calls from the AI microservice via the
- * {@code X-Api-Key} header. A valid key yields an authentication with the SERVICE
- * role (distinct from human users authenticated by JWT).
- *
- * <p>When no key is configured ({@code app.service.api-key} empty), the filter is
- * inert: the request proceeds without service authentication.
+ * Authenticates the AI microservice via the {@code X-Api-Key} header, granting
+ * the SERVICE role. Inert when {@code app.service.api-key} is empty.
  */
 @Component
 @RequiredArgsConstructor

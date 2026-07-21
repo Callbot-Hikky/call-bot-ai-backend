@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.OffsetDateTime;
+import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -42,7 +43,7 @@ class RestaurantControllerTest {
 
     private RestaurantResponse sample() {
         return new RestaurantResponse(UUID.randomUUID(), UUID.randomUUID(), "Chez Test",
-                "+33100000001", null, null, null, "Europe/Paris", "fr", true,
+                "+33100000001", null, null, null, "Europe/Paris", "fr", true, Map.of(),
                 OffsetDateTime.now(), OffsetDateTime.now());
     }
 

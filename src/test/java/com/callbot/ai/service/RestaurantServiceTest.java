@@ -37,7 +37,7 @@ class RestaurantServiceTest {
 
     private RestaurantRequest request() {
         return new RestaurantRequest(orgId, "Chez Test", "+33100000001",
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
     }
 
     @Test
