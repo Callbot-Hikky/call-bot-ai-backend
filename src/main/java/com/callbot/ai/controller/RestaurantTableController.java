@@ -1,6 +1,5 @@
 package com.callbot.ai.controller;
 
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -55,15 +54,5 @@ public class RestaurantTableController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable UUID id) {
         tableService.delete(id);
-    }
-
-    @GetMapping("/available")
-    public List<RestaurantTableResponse> listAvailable(
-        @RequestParam UUID restaurantId,
-        @RequestParam OffsetDateTime startsAt,
-        @RequestParam OffsetDateTime endsAt,
-        @RequestParam(required = false) Integer partySize
-    ) {
-        return tableService.listAvailable(restaurantId, startsAt, endsAt, partySize);
     }
 }

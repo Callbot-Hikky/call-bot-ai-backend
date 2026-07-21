@@ -108,10 +108,6 @@ Authorization: Bearer {{login.response.body.$.accessToken}}
 GET {{host}}/api/tables?restaurantId={{createRestaurant.response.body.$.id}}
 Authorization: Bearer {{login.response.body.$.accessToken}}
 
-### Lister les tables disponibles sur un créneau (partySize optionnel)
-GET {{host}}/api/tables/available?restaurantId={{createRestaurant.response.body.$.id}}&startsAt=2030-01-01T19:00:00Z&endsAt=2030-01-01T21:00:00Z&partySize=2
-Authorization: Bearer {{login.response.body.$.accessToken}}
-
 ### Récupérer une table par id
 GET {{host}}/api/tables/{{createTable.response.body.$.id}}
 Authorization: Bearer {{login.response.body.$.accessToken}}
@@ -285,10 +281,6 @@ Content-Type: application/json
   "endsAt": "2030-01-01T21:30:00Z",
   "partySize": 4
 }
-
-### Marquer une réservation comme arrivée (client arrivé)
-PATCH {{host}}/api/reservations/{{createReservation.response.body.$.id}}/arrived
-Authorization: Bearer {{login.response.body.$.accessToken}}
 
 ### Supprimer une réservation
 DELETE {{host}}/api/reservations/{{createReservation.response.body.$.id}}
