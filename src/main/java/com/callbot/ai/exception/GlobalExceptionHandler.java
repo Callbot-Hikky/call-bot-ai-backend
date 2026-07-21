@@ -46,12 +46,25 @@ public class GlobalExceptionHandler {
 
     /**
      * Covers unique-key violations and the reservations EXCLUDE constraint
-     * (a table double-booked on overlapping time ranges).
+     * (a table double-booked on overlapping time ranges). The constraint name
+     * carried by the database cause lets us return a machine-readable code and a
+     * precise message instead of one generic conflict.
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiError> handleDataIntegrity(DataIntegrityViolationException ex) {
+        Throwable cause = ex.getMostSpecificCause();
+        String detail = cause.getMessage() == null ? "" : cause.getMessage().toLowerCase();
+
+        String code = "conflict";
+        String message = "The request conflicts with an existing resource";
+        if (detail.contains("no_overlapping_reservation")) {
+            code = "table_overlap";
+            message = "This table is already booked for that time slot";
+        } else if (detail.contains("uq_customers_restaurant_phone")) {
+            code = "duplicate_phone";
+            message = "A customer already exists with this phone number";
+        }
         return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(ApiError.of(HttpStatus.CONFLICT.value(), "Conflict",
-                        "The request conflicts with an existing or overlapping resource"));
+                .body(ApiError.of(HttpStatus.CONFLICT.value(), code, message));
     }
 }

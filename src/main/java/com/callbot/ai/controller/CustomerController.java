@@ -3,6 +3,7 @@ package com.callbot.ai.controller;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,7 +33,13 @@ public class CustomerController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public CustomerResponse create(@Valid @RequestBody CustomerRequest request) {
-        return customerService.create(request);
+        try {
+            return customerService.create(request);
+        } catch (DataIntegrityViolationException race) {
+            // Deux creations simultanees du meme (restaurant, phone) : celle qui
+            // perd la course relit la fiche gagnante au lieu de renvoyer un 409.
+            return customerService.findByPhone(request.restaurantId(), request.phone());
+        }
     }
 
     @GetMapping

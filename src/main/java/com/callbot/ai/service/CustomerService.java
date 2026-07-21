@@ -25,15 +25,37 @@ public class CustomerService {
 
     public CustomerResponse create(CustomerRequest request) {
         requireRestaurant(request.restaurantId());
-        Customer customer = Customer.builder()
-                .restaurantId(request.restaurantId())
-                .phone(request.phone())
-                .firstName(request.firstName())
-                .lastName(request.lastName())
-                .email(request.email())
-                .notes(request.notes())
-                .build();
+        // Upsert par (restaurant, phone) : un habitue (deja appele par le callbot
+        // ou reserve auparavant) reutilise sa fiche au lieu de violer la contrainte
+        // d'unicite. On ne remplace que les champs fournis (pas d'ecrasement par null).
+        Customer customer = customerRepository
+                .findByRestaurantIdAndPhone(request.restaurantId(), request.phone())
+                .orElseGet(() -> Customer.builder()
+                        .restaurantId(request.restaurantId())
+                        .phone(request.phone())
+                        .build());
+        if (request.firstName() != null) {
+            customer.setFirstName(request.firstName());
+        }
+        if (request.lastName() != null) {
+            customer.setLastName(request.lastName());
+        }
+        if (request.email() != null) {
+            customer.setEmail(request.email());
+        }
+        if (request.notes() != null) {
+            customer.setNotes(request.notes());
+        }
         return CustomerResponse.from(customerRepository.save(customer));
+    }
+
+    // Relecture par (restaurant, phone) : sert au controller pour recuperer la
+    // fiche gagnante quand deux creations concurrentes du meme numero se croisent.
+    @Transactional(readOnly = true)
+    public CustomerResponse findByPhone(UUID restaurantId, String phone) {
+        return customerRepository.findByRestaurantIdAndPhone(restaurantId, phone)
+                .map(CustomerResponse::from)
+                .orElseThrow(() -> new ResourceNotFoundException("Customer", phone));
     }
 
     @Transactional(readOnly = true)
