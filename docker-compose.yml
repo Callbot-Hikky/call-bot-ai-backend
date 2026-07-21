@@ -20,6 +20,8 @@ services:
 
   app:
     build: .
+    # Explicit tag: both stacks would otherwise derive "<project>-app" and clash.
+    image: callbot-app:latest
     container_name: callbot-app
     restart: unless-stopped
     depends_on:

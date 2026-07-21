@@ -1,6 +1,7 @@
 package com.callbot.ai.dto;
 
 import java.time.OffsetDateTime;
+import java.util.Map;
 import java.util.UUID;
 
 import com.callbot.ai.model.Restaurant;
@@ -16,6 +17,7 @@ public record RestaurantResponse(
         String timezone,
         String locale,
         Boolean isActive,
+        Map<String, Object> attributes,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt) {
 
@@ -31,6 +33,7 @@ public record RestaurantResponse(
                 restaurant.getTimezone(),
                 restaurant.getLocale(),
                 restaurant.getIsActive(),
+                restaurant.getAttributes(),
                 restaurant.getCreatedAt(),
                 restaurant.getUpdatedAt());
     }

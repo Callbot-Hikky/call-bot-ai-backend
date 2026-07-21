@@ -24,14 +24,11 @@ import com.callbot.ai.repository.RestaurantRepository;
 import lombok.RequiredArgsConstructor;
 
 /**
- * Entry point used by the AI microservice to persist the outcome of a call:
- * resolves the restaurant, matches or creates the customer, then creates the call
- * and the reservation — all in a single transaction.
+ * Persists the outcome of a call in a single transaction: restaurant lookup,
+ * customer upsert, call and reservation creation.
  *
- * <p>Idempotent on {@code twilioCallSid}: an already-ingested call is not
- * recreated, the existing reservation is returned. Double-booking of a table is
- * prevented by the EXCLUDE constraint in the database (→ 409 via the global
- * exception handler).
+ * <p>Idempotent on {@code twilioCallSid}: an already-ingested call returns its
+ * existing reservation instead of creating a new one.
  */
 @Service
 @RequiredArgsConstructor
@@ -87,10 +84,7 @@ public class CallIngestService {
                 ReservationResponse.from(reservation), false);
     }
 
-    /**
-     * Finds the customer by (restaurant, phone) or creates one. Name/email fields
-     * are only updated when provided, to avoid overwriting existing data with null.
-     */
+    /** Name and email are only updated when provided, to avoid overwriting data with null. */
     private Customer upsertCustomer(UUID restaurantId, Caller caller) {
         Customer customer = customerRepository.findByRestaurantIdAndPhone(restaurantId, caller.phone())
                 .orElseGet(() -> Customer.builder()

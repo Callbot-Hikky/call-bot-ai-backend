@@ -54,7 +54,13 @@ Content-Type: application/json
   "organizationId": "{{me.response.body.$.organizationId}}",
   "name": "Chez Test 2",
   "phoneNumber": "+33611112222",
-  "city": "Paris"
+  "city": "Paris",
+  "attributes": {
+    "halal": true,
+    "vegetarien": true,
+    "terrasse": true,
+    "pmr": false
+  }
 }
 
 ### Lister tous les restaurants
@@ -292,7 +298,27 @@ Authorization: Bearer {{login.response.body.$.accessToken}}
 ### "restaurantPhone" doit correspondre au phoneNumber d'un restaurant existant.
 ### Ici on le chaîne depuis createRestaurant (lance createRestaurant d'abord).
 
-### Ingestion d'un appel → crée client + appel + réservation en une transaction
+### ⚠️ Dans une URL, "+" veut dire ESPACE. Le numéro doit donc être encodé
+### avec %2B à la place du + (sinon : 404 "Restaurant not found").
+### Ici on écrit le numéro en dur (celui de createRestaurant) déjà encodé.
+
+### 1) Au décrochage : le bot charge le contexte du restaurant (horaires, spécificités)
+GET {{host}}/api/calls/context?restaurantPhone=%2B33611112222
+X-Api-Key: {{serviceApiKey}}
+
+### 2) Pendant l'appel : "vous avez une table pour 2 à 19h ?"
+### Si le créneau est pris → available:false + alternatives proposées
+GET {{host}}/api/calls/availability?restaurantPhone=%2B33611112222&startsAt=2030-04-01T19:00:00Z&partySize=2
+X-Api-Key: {{serviceApiKey}}
+
+### Variante : créneau avec fin explicite (sinon 90 min par défaut)
+GET {{host}}/api/calls/availability?restaurantPhone=%2B33611112222&startsAt=2030-04-01T19:00:00Z&endsAt=2030-04-01T20:00:00Z&partySize=4
+X-Api-Key: {{serviceApiKey}}
+
+### Sans clé API → 401 (le bot ne peut rien lire sans sa clé)
+GET {{host}}/api/calls/context?restaurantPhone=%2B33611112222
+
+### 3) Fin d'appel : ingestion → crée client + appel + réservation en une transaction
 POST {{host}}/api/calls/ingest
 X-Api-Key: {{serviceApiKey}}
 Content-Type: application/json

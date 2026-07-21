@@ -45,8 +45,10 @@ public class SecurityConfig {
                         .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
-                        // Ingest endpoint reserved for the AI microservice (API key).
+                        // Call endpoints reserved for the AI microservice (API key).
                         .requestMatchers(HttpMethod.POST, "/api/calls/ingest").hasRole("SERVICE")
+                        .requestMatchers(HttpMethod.GET, "/api/calls/context", "/api/calls/availability")
+                        .hasRole("SERVICE")
                         .anyRequest().authenticated())
                 .addFilterBefore(serviceApiKeyFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)

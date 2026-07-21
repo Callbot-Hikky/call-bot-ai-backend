@@ -8,22 +8,17 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 
-/**
- * Payload sent by the AI microservice at the end of a phone call. Captures the
- * full intent ("this caller booked a table during the call") and is processed in
- * a single transaction.
- */
+/** Payload sent by the AI microservice at the end of a phone call. */
 public record CallIngestRequest(
-        // Twilio's unique call identifier, used as the idempotency key.
+        // Idempotency key.
         @NotBlank String twilioCallSid,
         // Number that was called: identifies the restaurant.
         @NotBlank String restaurantPhone,
-        // Caller's number (optional).
         String fromNumber,
         @NotNull @Valid Caller customer,
         @NotNull @Valid Booking reservation) {
 
-    /** Caller details, matched against an existing customer by phone number. */
+    /** Matched against an existing customer by phone number. */
     public record Caller(
             @NotBlank String phone,
             String firstName,
@@ -31,7 +26,6 @@ public record CallIngestRequest(
             String email) {
     }
 
-    /** Details of the reservation requested during the call. */
     public record Booking(
             UUID tableId,
             @NotNull OffsetDateTime startsAt,

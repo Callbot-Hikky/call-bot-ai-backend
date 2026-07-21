@@ -14,10 +14,7 @@ import com.callbot.ai.service.CallIngestService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
-/**
- * Service-to-service endpoint called by the AI microservice (API-key auth,
- * SERVICE role). See {@link com.callbot.ai.security.ServiceApiKeyFilter}.
- */
+/** Write endpoint called by the AI microservice at the end of a call. */
 @RestController
 @RequestMapping("/api/calls")
 @RequiredArgsConstructor

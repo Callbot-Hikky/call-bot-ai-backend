@@ -1,5 +1,6 @@
 package com.callbot.ai.dto;
 
+import java.util.Map;
 import java.util.UUID;
 
 import jakarta.validation.constraints.NotBlank;
@@ -14,5 +15,7 @@ public record RestaurantRequest(
         String postalCode,
         String timezone,
         String locale,
-        Boolean isActive) {
+        Boolean isActive,
+        // e.g. {"halal": true, "terrace": true}
+        Map<String, Object> attributes) {
 }
