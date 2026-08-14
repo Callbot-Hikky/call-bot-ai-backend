@@ -3,6 +3,7 @@ package com.callbot.ai.service;
 import java.util.HashMap;
 import java.util.List;
 import java.util.UUID;
+import java.util.Map;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -88,5 +89,11 @@ public class RestaurantService {
     private Restaurant find(UUID id) {
         return restaurantRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Restaurant", id));
+    }
+
+    public RestaurantResponse updateAttributes(UUID id, Map<String, Object> attributes) {
+        Restaurant restaurant = find(id);
+        restaurant.setAttributes(attributes);
+        return RestaurantResponse.from(restaurantRepository.save(restaurant));
     }
 }

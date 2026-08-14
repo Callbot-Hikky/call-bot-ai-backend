@@ -87,6 +87,45 @@ Content-Type: application/json
   "city": "Lyon"
 }
 
+### Modifier uniquement les attributes d'un restaurant
+PATCH {{host}}/api/restaurants/{{createRestaurant.response.body.$.id}}/attributes
+Authorization: Bearer {{login.response.body.$.accessToken}}
+Content-Type: application/json
+
+{
+  "dietary": {
+    "halal": true,
+    "casher": false,
+    "vegetarian": true,
+    "gluten_free": false,
+    "vegan": false,
+    "bio": true
+  },
+  "equipments": {
+    "terrace": true,
+    "air_conditioning": false,
+    "private_parking": false,
+    "wheelchair_accessible": true,
+    "pets_allowed": false,
+    "wifi": true,
+    "high_chairs": true,
+    "rooftop": false
+  },
+  "payments": {
+    "meal_vouchers": true,
+    "takeaway": true,
+    "card_payment": true,
+    "delivery": false,
+    "cash_only": false,
+    "reservation_recommended": true
+  },
+  "details": {
+    "price_range": "€€",
+    "cuisine_type": ["française", "italienne"],
+    "ambiance": ["romantique", "familial"]
+  }
+}
+
 ### Supprimer un restaurant
 DELETE {{host}}/api/restaurants/{{createRestaurant.response.body.$.id}}
 Authorization: Bearer {{login.response.body.$.accessToken}}
