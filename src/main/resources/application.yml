@@ -34,6 +34,8 @@ app:
   discord:
     webhook-client: ${DISCORD_WEBHOOK_CLIENT:}
     webhook-restaurant: ${DISCORD_WEBHOOK_RESTAURANT:}
+  frontend:
+    base-url: ${FRONTEND_BASE_URL:}
 
 management:
   endpoints:
