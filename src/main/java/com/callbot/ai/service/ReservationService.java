@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -13,6 +14,7 @@ import com.callbot.ai.dto.ReservationResponse;
 import com.callbot.ai.dto.RestaurantTableResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.model.Reservation;
+import com.callbot.ai.notification.ReservationCreatedEvent;
 import com.callbot.ai.repository.CustomerRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
@@ -29,6 +31,7 @@ public class ReservationService {
     private final RestaurantRepository restaurantRepository;
     private final RestaurantTableRepository tableRepository;
     private final CustomerRepository customerRepository;
+    private final ApplicationEventPublisher events;
 
     public ReservationResponse create(ReservationRequest request) {
         requireRestaurant(request.restaurantId());
@@ -44,7 +47,9 @@ public class ReservationService {
                 .source(request.source() != null ? request.source() : "callbot")
                 .notes(request.notes())
                 .build();
-        return ReservationResponse.from(reservationRepository.save(reservation));
+        Reservation saved = reservationRepository.save(reservation);
+        events.publishEvent(new ReservationCreatedEvent(saved.getId()));
+        return ReservationResponse.from(saved);
     }
 
     @Transactional(readOnly = true)
