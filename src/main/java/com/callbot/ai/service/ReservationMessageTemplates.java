@@ -1,5 +1,7 @@
 package com.callbot.ai.service;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -31,20 +33,22 @@ public class ReservationMessageTemplates {
                 : "Bonjour";
         String when = formatDateTime(reservation.getStartsAt(), restaurant.getTimezone());
         String address = formatAddress(restaurant);
+        String phone = formatPhoneLink(restaurant.getPhoneNumber());
         String rescheduleLink = buildRescheduleLink(reservation);
 
         return """
-                👋 %s,
+                %s,
                 Votre réservation chez **%s** est confirmée ✅
 
-                📅 %s
-                👥 %d personne(s)
-                📍 %s
+                **Date** : %s
+                **Nombre de personnes** : %d
+                **Adresse** : %s
+                **Téléphone** : %s
 
                 -# Notre assistant s'est peut-être trompé de créneau ? [Choisissez un autre horaire](%s)
 
                 À très vite !"""
-                .formatted(greeting, restaurant.getName(), when, reservation.getPartySize(), address, rescheduleLink);
+                .formatted(greeting, restaurant.getName(), when, reservation.getPartySize(), address, phone, rescheduleLink);
     }
 
     public String forRestaurant(Reservation reservation, Customer customer, Restaurant restaurant) {
@@ -55,12 +59,12 @@ public class ReservationMessageTemplates {
                 : "aucune";
 
         return """
-                🔔 **Nouvelle réservation**
+                **Nouvelle réservation**
 
-                👤 %s
-                📅 %s
-                👥 %d personne(s)
-                📝 Notes : %s"""
+                **Client** : %s
+                **Date** : %s
+                **Nombre de personnes** : %d
+                **Notes** : %s"""
                 .formatted(who, when, reservation.getPartySize(), notes);
     }
 
@@ -77,7 +81,17 @@ public class ReservationMessageTemplates {
             if (r.getPostalCode() != null) sb.append(r.getPostalCode()).append(' ');
             if (r.getCity() != null) sb.append(r.getCity());
         }
-        return sb.length() > 0 ? sb.toString().trim() : "adresse non renseignée";
+        if (sb.length() == 0) return "adresse non renseignée";
+        String address = sb.toString().trim();
+        String mapsUrl = "https://www.google.com/maps/search/?api=1&query="
+                + URLEncoder.encode(address, StandardCharsets.UTF_8);
+        return "[" + address + "](" + mapsUrl + ")";
+    }
+
+    private String formatPhoneLink(String phone) {
+        if (phone == null || phone.isBlank()) return "non renseigné";
+        String telHref = phone.replaceAll("[^+0-9]", "");
+        return "[" + phone + "](tel:" + telHref + ")";
     }
 
     private String formatCustomerIdentity(Customer customer) {
@@ -89,7 +103,9 @@ public class ReservationMessageTemplates {
             sb.append(customer.getLastName());
         }
         if (sb.length() == 0) sb.append("Client");
-        if (customer.getPhone() != null) sb.append(" — ").append(customer.getPhone());
+        if (customer.getPhone() != null) {
+            sb.append(" — ").append(formatPhoneLink(customer.getPhone()));
+        }
         return sb.toString();
     }
 

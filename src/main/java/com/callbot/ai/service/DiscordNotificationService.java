@@ -21,7 +21,7 @@ public class DiscordNotificationService {
     }
 
     public void sendReservationMessage(String content) {
-        sendRaw(props.webhookRestaurant(), "Jarvis", content);
+        sendRaw(props.webhookRestaurant(), "Jarvis", content + "\n\n------\n");
     }
 
     public void sendClientSmsMessage(String content) {
