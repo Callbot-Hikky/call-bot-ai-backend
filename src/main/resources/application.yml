@@ -31,6 +31,9 @@ app:
   service:
     # API key for the AI microservice (X-Api-Key header). Empty = service auth disabled.
     api-key: ${SERVICE_API_KEY:}
+  discord:
+    webhook-client: ${DISCORD_WEBHOOK_CLIENT:}
+    webhook-restaurant: ${DISCORD_WEBHOOK_RESTAURANT:}
 
 management:
   endpoints:
