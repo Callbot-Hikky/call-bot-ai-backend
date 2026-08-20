@@ -52,6 +52,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me-please-32bytes-minimum-required}
       JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
       SERVICE_API_KEY: ${SERVICE_API_KEY:-dev-service-key-change-me}
+      DISCORD_WEBHOOK_CLIENT: ${DISCORD_WEBHOOK_CLIENT:-}
+      DISCORD_WEBHOOK_RESTAURANT: ${DISCORD_WEBHOOK_RESTAURANT:-}
     ports:
       - "${SERVER_PORT:-8080}:8080"
     volumes:
