@@ -18,6 +18,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import com.callbot.ai.dto.ReservationRequest;
 import com.callbot.ai.dto.ReservationResponse;
@@ -38,6 +39,8 @@ class ReservationServiceTest {
     private RestaurantTableRepository tableRepository;
     @Mock
     private CustomerRepository customerRepository;
+    @Mock
+    private ApplicationEventPublisher events;
     @InjectMocks
     private ReservationService reservationService;
 
