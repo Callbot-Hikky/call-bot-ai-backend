@@ -113,6 +113,6 @@ public class ReservationMessageTemplates {
         String base = (frontend.baseUrl() != null && !frontend.baseUrl().isBlank())
                 ? frontend.baseUrl().replaceAll("/+$", "")
                 : "";
-        return base + "/reservations/" + reservation.getId() + "/reschedule";
+        return base + "/client/reservations/" + reservation.getId() + "/reschedule";
     }
 }
