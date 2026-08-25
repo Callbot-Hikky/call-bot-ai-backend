@@ -31,4 +31,19 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
     List<UUID> findBusyTableIds(@Param("restaurantId") UUID restaurantId,
             @Param("startsAt") OffsetDateTime startsAt,
             @Param("endsAt") OffsetDateTime endsAt);
+
+    /** Same as {@link #findBusyTableIds}, but skips one reservation (used for reschedule so a resa doesn't block its own slot). */
+    @Query("""
+            SELECT r.tableId FROM Reservation r
+            WHERE r.restaurantId = :restaurantId
+              AND r.tableId IS NOT NULL
+              AND r.status <> 'cancelled'
+              AND r.id <> :excludeReservationId
+              AND r.startsAt < :endsAt
+              AND r.endsAt > :startsAt
+            """)
+    List<UUID> findBusyTableIdsExcluding(@Param("restaurantId") UUID restaurantId,
+            @Param("startsAt") OffsetDateTime startsAt,
+            @Param("endsAt") OffsetDateTime endsAt,
+            @Param("excludeReservationId") UUID excludeReservationId);
 }
