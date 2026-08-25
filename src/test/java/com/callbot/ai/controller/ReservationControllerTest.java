@@ -45,7 +45,7 @@ class ReservationControllerTest {
                 OffsetDateTime.parse("2030-01-01T19:00:00Z"),
                 OffsetDateTime.parse("2030-01-01T21:00:00Z"),
                 2, "pending", "callbot", null,
-                OffsetDateTime.now(), OffsetDateTime.now(), null, null, null);
+                OffsetDateTime.now(), OffsetDateTime.now(), null, null, null, null);
     }
 
     @Test
