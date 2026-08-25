@@ -21,16 +21,18 @@ public record ReservationResponse(
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
         OffsetDateTime cancelledAt,
-        // Populated only via ?expand=table / ?expand=customer; omitted from the JSON otherwise.
+        // Populated only via ?expand=table / ?expand=customer / ?expand=restaurant; omitted otherwise.
         @JsonInclude(JsonInclude.Include.NON_NULL) RestaurantTableResponse table,
-        @JsonInclude(JsonInclude.Include.NON_NULL) CustomerResponse customer) {
+        @JsonInclude(JsonInclude.Include.NON_NULL) CustomerResponse customer,
+        @JsonInclude(JsonInclude.Include.NON_NULL) RestaurantSummaryResponse restaurant) {
 
     public static ReservationResponse from(Reservation reservation) {
-        return from(reservation, null, null);
+        return from(reservation, null, null, null);
     }
 
     public static ReservationResponse from(Reservation reservation,
-            RestaurantTableResponse table, CustomerResponse customer) {
+            RestaurantTableResponse table, CustomerResponse customer,
+            RestaurantSummaryResponse restaurant) {
         return new ReservationResponse(
                 reservation.getId(),
                 reservation.getRestaurantId(),
@@ -47,6 +49,7 @@ public record ReservationResponse(
                 reservation.getUpdatedAt(),
                 reservation.getCancelledAt(),
                 table,
-                customer);
+                customer,
+                restaurant);
     }
 }
