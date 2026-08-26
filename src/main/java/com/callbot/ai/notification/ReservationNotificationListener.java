@@ -60,4 +60,25 @@ public class ReservationNotificationListener {
         discord.sendClientSmsMessage(templates.forClient(reservation, customer, restaurant));
         discord.sendReservationMessage(templates.forRestaurant(reservation, customer, restaurant));
     }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+    public void onReservationUpdated(ReservationUpdatedEvent event) {
+        Reservation reservation = reservationRepository.findById(event.reservationId()).orElse(null);
+        if (reservation == null) {
+            log.warn("Reservation {} not found when handling updated event", event.reservationId());
+            return;
+        }
+        Restaurant restaurant = restaurantRepository.findById(reservation.getRestaurantId()).orElse(null);
+        if (restaurant == null) {
+            log.warn("Restaurant {} not found for reservation {}", reservation.getRestaurantId(), reservation.getId());
+            return;
+        }
+        Customer customer = reservation.getCustomerId() != null
+                ? customerRepository.findById(reservation.getCustomerId()).orElse(null)
+                : null;
+
+        discord.sendClientSmsMessage(templates.forClientUpdated(reservation, customer, restaurant));
+        discord.sendReservationMessage(templates.forRestaurantUpdated(reservation, customer, restaurant));
+    }
 }
