@@ -51,6 +51,30 @@ public class ReservationMessageTemplates {
                 .formatted(greeting, restaurant.getName(), when, reservation.getPartySize(), address, phone, rescheduleLink);
     }
 
+    public String forClientUpdated(Reservation reservation, Customer customer, Restaurant restaurant) {
+        String greeting = (customer != null && customer.getFirstName() != null)
+                ? "Bonjour **" + customer.getFirstName() + "**"
+                : "Bonjour";
+        String when = formatDateTime(reservation.getStartsAt(), restaurant.getTimezone());
+        String address = formatAddress(restaurant);
+        String phone = formatPhoneLink(restaurant.getPhoneNumber());
+        String rescheduleLink = buildRescheduleLink(reservation);
+
+        return """
+                %s,
+                Votre réservation chez **%s** a bien été mise à jour ✏️
+
+                **Date** : %s
+                **Nombre de personnes** : %d
+                **Adresse** : %s
+                **Téléphone** : %s
+
+                -# Besoin de changer à nouveau ? [Choisissez un autre horaire](%s)
+
+                À très vite !"""
+                .formatted(greeting, restaurant.getName(), when, reservation.getPartySize(), address, phone, rescheduleLink);
+    }
+
     public String forRestaurant(Reservation reservation, Customer customer, Restaurant restaurant) {
         String who = formatCustomerIdentity(customer);
         String when = formatDateTime(reservation.getStartsAt(), restaurant.getTimezone());
@@ -60,6 +84,23 @@ public class ReservationMessageTemplates {
 
         return """
                 **Nouvelle réservation**
+
+                **Client** : %s
+                **Date** : %s
+                **Nombre de personnes** : %d
+                **Notes** : %s"""
+                .formatted(who, when, reservation.getPartySize(), notes);
+    }
+
+    public String forRestaurantUpdated(Reservation reservation, Customer customer, Restaurant restaurant) {
+        String who = formatCustomerIdentity(customer);
+        String when = formatDateTime(reservation.getStartsAt(), restaurant.getTimezone());
+        String notes = (reservation.getNotes() != null && !reservation.getNotes().isBlank())
+                ? reservation.getNotes()
+                : "aucune";
+
+        return """
+                **Réservation modifiée**
 
                 **Client** : %s
                 **Date** : %s

@@ -76,9 +76,14 @@ public class ReservationController {
                 .collect(Collectors.toSet());
     }
 
+    /** {@code notify=true} déclenche les notifications Discord (client + resto).
+     *  On garde false par défaut : le staff qui bouge une table ou change un statut
+     *  ne doit pas spammer le client. Le flag est activé par la page reschedule client. */
     @PutMapping("/{id}")
-    public ReservationResponse update(@PathVariable UUID id, @Valid @RequestBody ReservationRequest request) {
-        return reservationService.update(id, request);
+    public ReservationResponse update(@PathVariable UUID id,
+            @Valid @RequestBody ReservationRequest request,
+            @RequestParam(defaultValue = "false") boolean notify) {
+        return reservationService.update(id, request, notify);
     }
 
     @DeleteMapping("/{id}")

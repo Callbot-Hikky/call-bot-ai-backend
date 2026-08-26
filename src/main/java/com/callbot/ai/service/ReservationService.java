@@ -29,6 +29,7 @@ import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.model.RestaurantHours;
 import com.callbot.ai.model.RestaurantTable;
 import com.callbot.ai.notification.ReservationCreatedEvent;
+import com.callbot.ai.notification.ReservationUpdatedEvent;
 import com.callbot.ai.repository.CustomerRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantHoursRepository;
@@ -84,7 +85,7 @@ public class ReservationService {
         return toResponse(find(id), expand);
     }
 
-    public ReservationResponse update(UUID id, ReservationRequest request) {
+    public ReservationResponse update(UUID id, ReservationRequest request, boolean notify) {
         Reservation reservation = find(id);
         reservation.setCustomerId(request.customerId());
         reservation.setTableId(request.tableId());
@@ -99,7 +100,11 @@ public class ReservationService {
             reservation.setSource(request.source());
         }
         reservation.setNotes(request.notes());
-        return ReservationResponse.from(reservationRepository.save(reservation));
+        Reservation saved = reservationRepository.save(reservation);
+        if (notify) {
+            events.publishEvent(new ReservationUpdatedEvent(saved.getId()));
+        }
+        return ReservationResponse.from(saved);
     }
 
     public void delete(UUID id) {
@@ -187,16 +192,21 @@ public class ReservationService {
         if (!closesAt.isAfter(opensAt)) {
             return slots;
         }
+        // Ne pas proposer de créneaux dans le passé — utile pour la journée en cours,
+        // où opensAt peut être 12h alors qu'il est déjà 15h.
+        OffsetDateTime nowInZone = OffsetDateTime.now(zone);
         LocalTime cursor = opensAt;
         // Hard cap: at most one slot per SLOT_STEP inside a single day (48 * 2 = 96 iterations).
         int safety = 0;
         while (!cursor.plus(duration).isAfter(closesAt) && safety++ < 200) {
             OffsetDateTime startsAt = ZonedDateTime.of(date, cursor, zone).toOffsetDateTime();
             OffsetDateTime endsAt = startsAt.plus(duration);
-            RestaurantTable free = firstFreeTable(restaurant.getId(), candidates, startsAt, endsAt,
-                    excludeReservationId);
-            if (free != null) {
-                slots.add(new RescheduleSlotsResponse.Slot(startsAt, endsAt, free.getId(), free.getCapacity()));
+            if (!startsAt.isBefore(nowInZone)) {
+                RestaurantTable free = firstFreeTable(restaurant.getId(), candidates, startsAt, endsAt,
+                        excludeReservationId);
+                if (free != null) {
+                    slots.add(new RescheduleSlotsResponse.Slot(startsAt, endsAt, free.getId(), free.getCapacity()));
+                }
             }
             LocalTime next = cursor.plus(SLOT_STEP);
             // LocalTime wraps at midnight — detect wrap and bail rather than looping forever.
