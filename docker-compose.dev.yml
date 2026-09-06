@@ -36,6 +36,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
+    # Nom d'image explicite : sinon compose derive le meme nom que docker-compose.yml
+    # (call-bot-ai-backend-app) et reutilise l'image prod, dont l'ENTRYPOINT java -jar
+    # ignore la commande dev-reload.sh.
+    image: call-bot-ai-backend-app-dev
     container_name: callbot-app-dev
     working_dir: /app
     depends_on:
