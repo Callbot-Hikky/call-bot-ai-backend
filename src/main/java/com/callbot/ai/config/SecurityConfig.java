@@ -53,6 +53,8 @@ public class SecurityConfig {
                         .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
+                        // Payment webhook: unauthenticated, trust is the provider's signed webhook header.
+                        .requestMatchers(HttpMethod.POST, "/api/offers/webhook").permitAll()
                         // Ingest endpoint reserved for the AI microservice (API key).
                         .requestMatchers(HttpMethod.POST, "/api/calls/ingest").hasRole("SERVICE")
                         .anyRequest().authenticated())
