@@ -211,6 +211,35 @@ exemples dans `.env.example`) :
 > ⚠️ **En production**, remplace impérativement `JWT_SECRET` par une valeur
 > aléatoire longue et garde-la hors du dépôt.
 
+### Paiement
+
+| Variable                | Défaut (dev)                          | Description                                     |
+|-------------------------|---------------------------------------|-------------------------------------------------|
+| `PAYMENT_PROVIDER`      | `stripe`                              | Adapter de paiement activé                      |
+| `STRIPE_SECRET_KEY`     | vide                                  | Clé secrète ; vide = checkout désactivé (`502`) |
+| `STRIPE_PRO_PRICE_ID`   | vide                                  | Price récurrent de l'offre `pro` ; vide = prix inline |
+| `STRIPE_WEBHOOK_SECRET` | vide                                  | Secret de signature (`whsec_…`) des webhooks    |
+| `STRIPE_SUCCESS_URL`    | `http://localhost:4200/offre/success` | Page de retour après paiement                   |
+| `STRIPE_CANCEL_URL`     | `http://localhost:4200/offre`         | Page de retour si abandon                       |
+
+#### Changer de prestataire
+
+Le domaine ne connaît que deux ports, dans `com.callbot.ai.gateway` :
+`PaymentGateway` (ouvrir un checkout) et `PaymentEventParser` (authentifier et
+normaliser un webhook). Stripe n'est qu'un adapter, confiné à
+`gateway/stripe/` — c'est le **seul** package qui importe `com.stripe.*`.
+
+Pour brancher un autre prestataire :
+
+1. créer `gateway/<provider>/` avec les deux implémentations, annotées
+   `@ConditionalOnProperty(prefix = "app.payment", name = "provider", havingValue = "<provider>")` ;
+2. ajouter ses `@ConfigurationProperties` dans ce même package ;
+3. poser `PAYMENT_PROVIDER=<provider>`.
+
+Aucun changement dans `OfferService`, les contrôleurs, les entités ou le front :
+le catalogue, les statuts d'abonnement et le contrat HTTP sont inchangés. La
+colonne `provider` garde la trace du prestataire ayant créé chaque abonnement.
+
 ## Tests
 
 La suite couvre trois niveaux : unitaire (Mockito), web slice (`@WebMvcTest`)
