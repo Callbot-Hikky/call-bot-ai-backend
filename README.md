@@ -235,6 +235,15 @@ Exemple de payload envoyé par l'IA :
 }
 ```
 
+### Offres & paiement (Bearer)
+
+| Méthode | Endpoint                         | Auth | Description                                  |
+|---------|----------------------------------|------|----------------------------------------------|
+| `GET`   | `/api/offers`                    | Oui  | Catalogue des plans (prix côté serveur)      |
+| `POST`  | `/api/offers/{code}/checkout`    | Oui  | Ouvre un checkout, renvoie l'URL de paiement |
+| `GET`   | `/api/offers/checkout/{id}`      | Oui  | Récap d'une session (page de succès)         |
+| `POST`  | `/api/offers/webhook`            | Non  | Callback du prestataire (signature vérifiée) |
+
 ### Divers
 
 | Méthode | Endpoint           | Auth | Description   |
