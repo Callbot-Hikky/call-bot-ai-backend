@@ -41,11 +41,11 @@ class ReservationControllerTest {
     private ReservationService reservationService;
 
     private ReservationResponse sample() {
-        return new ReservationResponse(UUID.randomUUID(), UUID.randomUUID(), null, null, null,
+        return new ReservationResponse(UUID.randomUUID(), UUID.randomUUID(), null, null, null, null,
                 OffsetDateTime.parse("2030-01-01T19:00:00Z"),
                 OffsetDateTime.parse("2030-01-01T21:00:00Z"),
                 2, "pending", "callbot", null,
-                OffsetDateTime.now(), OffsetDateTime.now(), null, null, null, null);
+                OffsetDateTime.now(), OffsetDateTime.now(), null, null, null, null, null);
     }
 
     @Test
