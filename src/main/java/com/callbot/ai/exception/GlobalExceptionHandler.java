@@ -51,6 +51,12 @@ public class GlobalExceptionHandler {
                 .body(ApiError.of(HttpStatus.FORBIDDEN.value(), "forbidden", ex.getMessage()));
     }
 
+    @ExceptionHandler(MenuFileException.class)
+    public ResponseEntity<ApiError> handleMenuFile(MenuFileException ex) {
+        return ResponseEntity.status(ex.getStatus())
+                .body(ApiError.of(ex.getStatus().value(), ex.getCode(), ex.getMessage()));
+    }
+
     /**
      * Covers unique-key violations and the reservations EXCLUDE constraint
      * (a table double-booked on overlapping time ranges). The constraint name
