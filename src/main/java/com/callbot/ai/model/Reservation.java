@@ -1,13 +1,19 @@
 package com.callbot.ai.model;
 
 import java.time.OffsetDateTime;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.UUID;
 
+import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
+import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
@@ -36,8 +42,21 @@ public class Reservation {
     @Column(name = "customer_id")
     private UUID customerId;
 
+    // Table PRINCIPALE (première des tables retenues). Conservée pour les
+    // lecteurs mono-table et la contrainte anti-double-booking existante.
     @Column(name = "table_id")
     private UUID tableId;
+
+    // Ensemble des tables occupées par la réservation (principale incluse).
+    // Un groupe trop grand pour une seule table est réparti sur plusieurs
+    // tables (ex. 15 pers. = 8 + 4 + 4). Persisté dans la table de liaison
+    // reservation_tables ; c'est la source de vérité de l'occupation.
+    @ElementCollection(fetch = FetchType.LAZY)
+    @CollectionTable(name = "reservation_tables",
+            joinColumns = @JoinColumn(name = "reservation_id"))
+    @Column(name = "table_id")
+    @Builder.Default
+    private Set<UUID> tableIds = new LinkedHashSet<>();
 
     @Column(name = "call_id")
     private UUID callId;

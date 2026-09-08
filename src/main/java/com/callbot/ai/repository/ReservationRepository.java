@@ -19,11 +19,14 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
 
     Optional<Reservation> findByCallId(UUID callId);
 
-    /** Tables taken over the range, mirroring the {@code no_overlapping_reservation} constraint. */
+    /**
+     * Toutes les tables occupées sur la plage — y compris celles des
+     * réservations réparties sur plusieurs tables (jointure sur la table de
+     * liaison reservation_tables via la collection {@code tableIds}).
+     */
     @Query("""
-            SELECT r.tableId FROM Reservation r
+            SELECT tid FROM Reservation r JOIN r.tableIds tid
             WHERE r.restaurantId = :restaurantId
-              AND r.tableId IS NOT NULL
               AND r.status <> 'cancelled'
               AND r.startsAt < :endsAt
               AND r.endsAt > :startsAt
@@ -34,9 +37,8 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
 
     /** Same as {@link #findBusyTableIds}, but skips one reservation (used for reschedule so a resa doesn't block its own slot). */
     @Query("""
-            SELECT r.tableId FROM Reservation r
+            SELECT tid FROM Reservation r JOIN r.tableIds tid
             WHERE r.restaurantId = :restaurantId
-              AND r.tableId IS NOT NULL
               AND r.status <> 'cancelled'
               AND r.id <> :excludeReservationId
               AND r.startsAt < :endsAt

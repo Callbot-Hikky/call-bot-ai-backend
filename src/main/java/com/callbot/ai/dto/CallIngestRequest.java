@@ -1,6 +1,7 @@
 package com.callbot.ai.dto;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 import jakarta.validation.Valid;
@@ -27,7 +28,11 @@ public record CallIngestRequest(
     }
 
     public record Booking(
+            // Table principale (compat). Peut être null si le groupe est réparti.
             UUID tableId,
+            // Toutes les tables retenues (groupe réparti sur plusieurs tables).
+            // Si absent/vide, on retombe sur {@code tableId}.
+            List<UUID> tableIds,
             @NotNull OffsetDateTime startsAt,
             @NotNull OffsetDateTime endsAt,
             @NotNull @Positive Integer partySize,
