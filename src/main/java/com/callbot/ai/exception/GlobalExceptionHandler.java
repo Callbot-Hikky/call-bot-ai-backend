@@ -12,6 +12,7 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import com.callbot.ai.dto.ApiError;
 
@@ -55,6 +56,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleMenuFile(MenuFileException ex) {
         return ResponseEntity.status(ex.getStatus())
                 .body(ApiError.of(ex.getStatus().value(), ex.getCode(), ex.getMessage()));
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiError> handleMaxUpload(MaxUploadSizeExceededException ex) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(ApiError.of(HttpStatus.PAYLOAD_TOO_LARGE.value(), "file_too_large",
+                        "File exceeds the maximum upload size"));
     }
 
     /**

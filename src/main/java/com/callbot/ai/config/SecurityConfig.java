@@ -45,6 +45,8 @@ public class SecurityConfig {
                         .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
+                        // Lecture publique du menu (lien dans le message de confirmation, QR code).
+                        .requestMatchers(HttpMethod.GET, "/api/public/**").permitAll()
                         // Call endpoints reserved for the AI microservice (API key).
                         .requestMatchers(HttpMethod.POST, "/api/calls/ingest").hasRole("SERVICE")
                         .requestMatchers(HttpMethod.GET, "/api/calls/context", "/api/calls/availability")
