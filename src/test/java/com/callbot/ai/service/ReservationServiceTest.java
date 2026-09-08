@@ -23,10 +23,13 @@ import org.springframework.context.ApplicationEventPublisher;
 import com.callbot.ai.dto.ReservationRequest;
 import com.callbot.ai.dto.ReservationResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
+import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.repository.CustomerRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 import com.callbot.ai.repository.RestaurantTableRepository;
+import com.callbot.ai.security.CallerOrganizationResolver;
 
 @ExtendWith(MockitoExtension.class)
 class ReservationServiceTest {
@@ -41,10 +44,19 @@ class ReservationServiceTest {
     private CustomerRepository customerRepository;
     @Mock
     private ApplicationEventPublisher events;
+    @Mock
+    private CallerOrganizationResolver callerOrganization;
     @InjectMocks
     private ReservationService reservationService;
 
     private final UUID restaurantId = UUID.randomUUID();
+    private final UUID organizationId = UUID.randomUUID();
+    private final UUID otherOrganizationId = UUID.randomUUID();
+
+    private static final String OWNER = "owner@resto.fr";
+    private static final String INTRUDER = "intruder@autre-resto.fr";
+    /** The AI microservice authenticates with an API key: no user, no organization. */
+    private static final String SERVICE_CALLER = null;
 
     private ReservationRequest request() {
         return new ReservationRequest(restaurantId, null, null, null,
@@ -53,12 +65,21 @@ class ReservationServiceTest {
                 2, null, null, null);
     }
 
+    private Restaurant restaurant() {
+        return Restaurant.builder().id(restaurantId).organizationId(organizationId).build();
+    }
+
+    private Reservation reservation(UUID id) {
+        return Reservation.builder().id(id).restaurantId(restaurantId).partySize(2).build();
+    }
+
     @Test
     void create_whenRestaurantExists_appliesDefaultStatusAndSource() {
-        when(restaurantRepository.existsById(restaurantId)).thenReturn(true);
+        when(callerOrganization.resolve(OWNER)).thenReturn(Optional.of(organizationId));
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
         when(reservationRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        ReservationResponse response = reservationService.create(request());
+        ReservationResponse response = reservationService.create(request(), OWNER);
 
         assertThat(response.partySize()).isEqualTo(2);
         assertThat(response.status()).isEqualTo("pending");
@@ -67,9 +88,20 @@ class ReservationServiceTest {
 
     @Test
     void create_whenRestaurantMissing_throwsAndDoesNotSave() {
-        when(restaurantRepository.existsById(restaurantId)).thenReturn(false);
+        when(callerOrganization.resolve(OWNER)).thenReturn(Optional.of(organizationId));
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> reservationService.create(request()))
+        assertThatThrownBy(() -> reservationService.create(request(), OWNER))
+                .isInstanceOf(ResourceNotFoundException.class);
+        verify(reservationRepository, never()).save(any());
+    }
+
+    @Test
+    void create_forRestaurantOfAnotherOrganization_throwsAndDoesNotSave() {
+        when(callerOrganization.resolve(INTRUDER)).thenReturn(Optional.of(otherOrganizationId));
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
+
+        assertThatThrownBy(() -> reservationService.create(request(), INTRUDER))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(reservationRepository, never()).save(any());
     }
@@ -79,27 +111,103 @@ class ReservationServiceTest {
         UUID id = UUID.randomUUID();
         when(reservationRepository.findById(id)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> reservationService.get(id, Set.of()))
+        assertThatThrownBy(() -> reservationService.get(id, Set.of(), OWNER))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void get_whenReservationBelongsToAnotherOrganization_reportsItMissing() {
+        UUID id = UUID.randomUUID();
+        when(reservationRepository.findById(id)).thenReturn(Optional.of(reservation(id)));
+        when(callerOrganization.resolve(INTRUDER)).thenReturn(Optional.of(otherOrganizationId));
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
+
+        assertThatThrownBy(() -> reservationService.get(id, Set.of(), INTRUDER))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void get_whenReservationBelongsToCallerOrganization_returnsIt() {
+        UUID id = UUID.randomUUID();
+        when(reservationRepository.findById(id)).thenReturn(Optional.of(reservation(id)));
+        when(callerOrganization.resolve(OWNER)).thenReturn(Optional.of(organizationId));
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
+
+        assertThat(reservationService.get(id, Set.of(), OWNER).partySize()).isEqualTo(2);
     }
 
     @Test
     void delete_whenMissing_throwsAndDoesNotDelete() {
         UUID id = UUID.randomUUID();
-        when(reservationRepository.existsById(id)).thenReturn(false);
+        when(reservationRepository.findById(id)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> reservationService.delete(id))
+        assertThatThrownBy(() -> reservationService.delete(id, OWNER))
+                .isInstanceOf(ResourceNotFoundException.class);
+        verify(reservationRepository, never()).deleteById(any());
+    }
+
+    @Test
+    void delete_whenReservationBelongsToAnotherOrganization_throwsAndDoesNotDelete() {
+        UUID id = UUID.randomUUID();
+        when(reservationRepository.findById(id)).thenReturn(Optional.of(reservation(id)));
+        when(callerOrganization.resolve(INTRUDER)).thenReturn(Optional.of(otherOrganizationId));
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
+
+        assertThatThrownBy(() -> reservationService.delete(id, INTRUDER))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(reservationRepository, never()).deleteById(any());
     }
 
     @Test
     void list_withRestaurantId_filters() {
+        when(callerOrganization.resolve(OWNER)).thenReturn(Optional.of(organizationId));
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
         when(reservationRepository.findByRestaurantId(restaurantId)).thenReturn(List.of());
 
-        reservationService.list(restaurantId, Set.of());
+        reservationService.list(restaurantId, Set.of(), OWNER);
 
         verify(reservationRepository).findByRestaurantId(restaurantId);
         verify(reservationRepository, never()).findAll();
+    }
+
+    @Test
+    void list_withRestaurantIdOfAnotherOrganization_throws() {
+        when(callerOrganization.resolve(INTRUDER)).thenReturn(Optional.of(otherOrganizationId));
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
+
+        assertThatThrownBy(() -> reservationService.list(restaurantId, Set.of(), INTRUDER))
+                .isInstanceOf(ResourceNotFoundException.class);
+        verify(reservationRepository, never()).findByRestaurantId(any());
+    }
+
+    @Test
+    void list_withoutRestaurantId_scopesToCallerOrganization() {
+        when(callerOrganization.resolve(OWNER)).thenReturn(Optional.of(organizationId));
+        when(restaurantRepository.findByOrganizationId(organizationId)).thenReturn(List.of(restaurant()));
+        when(reservationRepository.findByRestaurantIdIn(List.of(restaurantId))).thenReturn(List.of());
+
+        reservationService.list(null, Set.of(), OWNER);
+
+        verify(reservationRepository).findByRestaurantIdIn(List.of(restaurantId));
+        verify(reservationRepository, never()).findAll();
+    }
+
+    @Test
+    void list_withoutRestaurantId_whenOrganizationHasNoRestaurant_returnsEmpty() {
+        when(callerOrganization.resolve(OWNER)).thenReturn(Optional.of(organizationId));
+        when(restaurantRepository.findByOrganizationId(organizationId)).thenReturn(List.of());
+
+        assertThat(reservationService.list(null, Set.of(), OWNER)).isEmpty();
+        verify(reservationRepository, never()).findAll();
+    }
+
+    @Test
+    void list_forServiceCaller_isNotScopedToAnyOrganization() {
+        when(callerOrganization.resolve(SERVICE_CALLER)).thenReturn(Optional.empty());
+        when(reservationRepository.findAll()).thenReturn(List.of());
+
+        reservationService.list(null, Set.of(), SERVICE_CALLER);
+
+        verify(reservationRepository).findAll();
     }
 }

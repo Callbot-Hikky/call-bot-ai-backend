@@ -14,8 +14,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
-import com.callbot.ai.model.Organization;
-import com.callbot.ai.repository.OrganizationRepository;
 import com.callbot.ai.support.AbstractIntegrationTest;
 import com.jayway.jsonpath.JsonPath;
 
@@ -24,14 +22,10 @@ class RestaurantCrudIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private MockMvc mockMvc;
 
-    @Autowired
-    private OrganizationRepository organizationRepository;
-
     @Test
     void restaurantCrudLifecycle() throws Exception {
         String token = registerAndGetToken("owner-crud@example.com");
-        UUID organizationId = organizationRepository.save(
-                Organization.builder().name("Test Org").build()).getId();
+        UUID organizationId = organizationIdOf(token);
 
         String created = mockMvc.perform(post("/api/restaurants")
                 .header("Authorization", "Bearer " + token)
@@ -72,8 +66,7 @@ class RestaurantCrudIntegrationTest extends AbstractIntegrationTest {
     @Test
     void overlappingReservationsOnSameTableAreRejected() throws Exception {
         String token = registerAndGetToken("owner-overlap@example.com");
-        UUID organizationId = organizationRepository.save(
-                Organization.builder().name("Overlap Org").build()).getId();
+        UUID organizationId = organizationIdOf(token);
 
         String restaurant = mockMvc.perform(post("/api/restaurants")
                 .header("Authorization", "Bearer " + token)
@@ -117,8 +110,7 @@ class RestaurantCrudIntegrationTest extends AbstractIntegrationTest {
     @Test
     void reservationExpandsTableAndCustomerOnDemand() throws Exception {
         String token = registerAndGetToken("owner-expand@example.com");
-        UUID organizationId = organizationRepository.save(
-                Organization.builder().name("Expand Org").build()).getId();
+        UUID organizationId = organizationIdOf(token);
 
         String restaurant = mockMvc.perform(post("/api/restaurants")
                 .header("Authorization", "Bearer " + token)
@@ -176,6 +168,15 @@ class RestaurantCrudIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.table.name").value("T7"))
                 .andExpect(jsonPath("$.customer.id").value(customerId))
                 .andExpect(jsonPath("$.customer.firstName").value("Alice"));
+    }
+
+    /** The organization the freshly registered user owns — the only one they may write to. */
+    private UUID organizationIdOf(String token) throws Exception {
+        String me = mockMvc.perform(get("/api/me")
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return UUID.fromString(JsonPath.read(me, "$.organizationId"));
     }
 
     private String registerAndGetToken(String email) throws Exception {

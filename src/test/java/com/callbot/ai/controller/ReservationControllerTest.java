@@ -50,7 +50,7 @@ class ReservationControllerTest {
 
     @Test
     void create_withValidPayload_returns201() throws Exception {
-        when(reservationService.create(any())).thenReturn(sample());
+        when(reservationService.create(any(), any())).thenReturn(sample());
 
         mockMvc.perform(post("/api/reservations")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -72,7 +72,7 @@ class ReservationControllerTest {
 
     @Test
     void get_returns200() throws Exception {
-        when(reservationService.get(any(), any())).thenReturn(sample());
+        when(reservationService.get(any(), any(), any())).thenReturn(sample());
 
         mockMvc.perform(get("/api/reservations/" + UUID.randomUUID()))
                 .andExpect(status().isOk())
@@ -81,7 +81,7 @@ class ReservationControllerTest {
 
     @Test
     void get_whenNotFound_returns404() throws Exception {
-        when(reservationService.get(any(), any()))
+        when(reservationService.get(any(), any(), any()))
                 .thenThrow(new ResourceNotFoundException("Reservation", UUID.randomUUID()));
 
         mockMvc.perform(get("/api/reservations/" + UUID.randomUUID()))

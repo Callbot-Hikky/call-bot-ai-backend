@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -35,6 +36,7 @@ import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantHoursRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 import com.callbot.ai.repository.RestaurantTableRepository;
+import com.callbot.ai.security.CallerOrganizationResolver;
 
 import lombok.RequiredArgsConstructor;
 
@@ -52,9 +54,10 @@ public class ReservationService {
     private final CustomerRepository customerRepository;
     private final RestaurantHoursRepository hoursRepository;
     private final ApplicationEventPublisher events;
+    private final CallerOrganizationResolver callerOrganization;
 
-    public ReservationResponse create(ReservationRequest request) {
-        requireRestaurant(request.restaurantId());
+    public ReservationResponse create(ReservationRequest request, String callerEmail) {
+        requireRestaurantAccess(request.restaurantId(), callerOrganization.resolve(callerEmail));
         Reservation reservation = Reservation.builder()
                 .restaurantId(request.restaurantId())
                 .customerId(request.customerId())
@@ -73,20 +76,33 @@ public class ReservationService {
     }
 
     @Transactional(readOnly = true)
-    public List<ReservationResponse> list(UUID restaurantId, Set<String> expand) {
-        List<Reservation> reservations = restaurantId != null
-                ? reservationRepository.findByRestaurantId(restaurantId)
-                : reservationRepository.findAll();
+    public List<ReservationResponse> list(UUID restaurantId, Set<String> expand, String callerEmail) {
+        Optional<UUID> callerOrganizationId = callerOrganization.resolve(callerEmail);
+        List<Reservation> reservations;
+        if (restaurantId != null) {
+            requireRestaurantAccess(restaurantId, callerOrganizationId);
+            reservations = reservationRepository.findByRestaurantId(restaurantId);
+        } else if (callerOrganizationId.isEmpty()) {
+            reservations = reservationRepository.findAll();
+        } else {
+            List<UUID> restaurantIds = restaurantRepository.findByOrganizationId(callerOrganizationId.get())
+                    .stream()
+                    .map(Restaurant::getId)
+                    .toList();
+            reservations = restaurantIds.isEmpty()
+                    ? List.of()
+                    : reservationRepository.findByRestaurantIdIn(restaurantIds);
+        }
         return reservations.stream().map(r -> toResponse(r, expand)).toList();
     }
 
     @Transactional(readOnly = true)
-    public ReservationResponse get(UUID id, Set<String> expand) {
-        return toResponse(find(id), expand);
+    public ReservationResponse get(UUID id, Set<String> expand, String callerEmail) {
+        return toResponse(find(id, callerEmail), expand);
     }
 
-    public ReservationResponse update(UUID id, ReservationRequest request, boolean notify) {
-        Reservation reservation = find(id);
+    public ReservationResponse update(UUID id, ReservationRequest request, boolean notify, String callerEmail) {
+        Reservation reservation = find(id, callerEmail);
         reservation.setCustomerId(request.customerId());
         reservation.setTableId(request.tableId());
         reservation.setCallId(request.callId());
@@ -107,11 +123,9 @@ public class ReservationService {
         return ReservationResponse.from(saved);
     }
 
-    public void delete(UUID id) {
-        if (!reservationRepository.existsById(id)) {
-            throw new ResourceNotFoundException("Reservation", id);
-        }
-        reservationRepository.deleteById(id);
+    public void delete(UUID id, String callerEmail) {
+        Reservation reservation = find(id, callerEmail);
+        reservationRepository.deleteById(reservation.getId());
     }
 
     /**
@@ -121,8 +135,9 @@ public class ReservationService {
      * own slot on the current day.
      */
     @Transactional(readOnly = true)
-    public RescheduleSlotsResponse rescheduleSlots(UUID reservationId, LocalDate fromDate, Integer partySizeOverride) {
-        Reservation reservation = find(reservationId);
+    public RescheduleSlotsResponse rescheduleSlots(UUID reservationId, LocalDate fromDate,
+            Integer partySizeOverride, String callerEmail) {
+        Reservation reservation = find(reservationId, callerEmail);
         Restaurant restaurant = restaurantRepository.findById(reservation.getRestaurantId())
                 .orElseThrow(() -> new ResourceNotFoundException("Restaurant", reservation.getRestaurantId()));
 
@@ -258,13 +273,32 @@ public class ReservationService {
         return ReservationResponse.from(reservation, table, customer, restaurant);
     }
 
-    private Reservation find(UUID id) {
-        return reservationRepository.findById(id)
+    /**
+     * Loads a reservation the caller is allowed to see. A reservation belonging to
+     * another organization is reported as missing rather than forbidden, so the API
+     * never confirms that someone else's reservation exists.
+     */
+    private Reservation find(UUID id, String callerEmail) {
+        Reservation reservation = reservationRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Reservation", id));
+        Optional<UUID> callerOrganizationId = callerOrganization.resolve(callerEmail);
+        if (callerOrganizationId.isPresent()) {
+            UUID owner = restaurantRepository.findById(reservation.getRestaurantId())
+                    .map(Restaurant::getOrganizationId)
+                    .orElse(null);
+            if (!callerOrganizationId.get().equals(owner)) {
+                throw new ResourceNotFoundException("Reservation", id);
+            }
+        }
+        return reservation;
     }
 
-    private void requireRestaurant(UUID restaurantId) {
-        if (!restaurantRepository.existsById(restaurantId)) {
+    /** Same rule as {@link #find}, applied to the restaurant a reservation is being attached to. */
+    private void requireRestaurantAccess(UUID restaurantId, Optional<UUID> callerOrganizationId) {
+        Restaurant restaurant = restaurantRepository.findById(restaurantId)
+                .orElseThrow(() -> new ResourceNotFoundException("Restaurant", restaurantId));
+        if (callerOrganizationId.isPresent()
+                && !callerOrganizationId.get().equals(restaurant.getOrganizationId())) {
             throw new ResourceNotFoundException("Restaurant", restaurantId);
         }
     }

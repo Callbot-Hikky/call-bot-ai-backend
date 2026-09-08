@@ -13,8 +13,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
-import com.callbot.ai.model.Organization;
-import com.callbot.ai.repository.OrganizationRepository;
 import com.callbot.ai.support.AbstractIntegrationTest;
 import com.jayway.jsonpath.JsonPath;
 
@@ -26,9 +24,6 @@ class CallContextIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
-
-    @Autowired
-    private OrganizationRepository organizationRepository;
 
     @Test
     void context_returnsAttributesAndPolicies() throws Exception {
@@ -108,11 +103,10 @@ class CallContextIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
-    /** Creates an organization, a restaurant with attributes and one table. */
+    /** Creates a restaurant with attributes and one table, owned by a fresh registrant. */
     private String seedRestaurantWithTable(String phone, String ownerEmail, int capacity) throws Exception {
         String token = registerAndGetToken(ownerEmail);
-        UUID organizationId = organizationRepository.save(
-                Organization.builder().name("Context Org").build()).getId();
+        UUID organizationId = organizationIdOf(token);
 
         String restaurant = mockMvc.perform(post("/api/restaurants")
                 .header("Authorization", "Bearer " + token)
@@ -133,6 +127,15 @@ class CallContextIntegrationTest extends AbstractIntegrationTest {
                         .formatted(restaurantId, capacity)))
                 .andExpect(status().isCreated());
         return token;
+    }
+
+    /** The organization the freshly registered user owns — the only one they may write to. */
+    private UUID organizationIdOf(String token) throws Exception {
+        String me = mockMvc.perform(get("/api/me")
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return UUID.fromString(JsonPath.read(me, "$.organizationId"));
     }
 
     private String registerAndGetToken(String email) throws Exception {

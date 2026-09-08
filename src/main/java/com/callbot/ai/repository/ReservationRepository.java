@@ -1,6 +1,7 @@
 package com.callbot.ai.repository;
 
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -14,6 +15,9 @@ import com.callbot.ai.model.Reservation;
 public interface ReservationRepository extends JpaRepository<Reservation, UUID> {
 
     List<Reservation> findByRestaurantId(UUID restaurantId);
+
+    /** Reservations across a set of restaurants — used to scope listings to one organization. */
+    List<Reservation> findByRestaurantIdIn(Collection<UUID> restaurantIds);
 
     List<Reservation> findByCustomerId(UUID customerId);
 
