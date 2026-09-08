@@ -26,6 +26,7 @@ import com.callbot.ai.dto.RestaurantResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.security.JwtAuthenticationFilter;
 import com.callbot.ai.security.ServiceApiKeyFilter;
+import com.callbot.ai.service.GuaranteeSettingsService;
 import com.callbot.ai.service.RestaurantService;
 
 @WebMvcTest(controllers = RestaurantController.class,
@@ -40,6 +41,9 @@ class RestaurantControllerTest {
 
     @MockitoBean
     private RestaurantService restaurantService;
+
+    @MockitoBean
+    private GuaranteeSettingsService guaranteeSettingsService;
 
     private RestaurantResponse sample() {
         return new RestaurantResponse(UUID.randomUUID(), UUID.randomUUID(), "Chez Test",

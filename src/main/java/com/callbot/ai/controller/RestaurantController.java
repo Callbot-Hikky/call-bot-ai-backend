@@ -5,6 +5,7 @@ import java.util.UUID;
 import java.util.Map;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -17,8 +18,12 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.callbot.ai.security.AuthenticatedCaller;
+import com.callbot.ai.dto.GuaranteeSettingsRequest;
+import com.callbot.ai.dto.GuaranteeSettingsResponse;
 import com.callbot.ai.dto.RestaurantRequest;
 import com.callbot.ai.dto.RestaurantResponse;
+import com.callbot.ai.service.GuaranteeSettingsService;
 import com.callbot.ai.service.RestaurantService;
 
 import jakarta.validation.Valid;
@@ -30,6 +35,7 @@ import lombok.RequiredArgsConstructor;
 public class RestaurantController {
 
     private final RestaurantService restaurantService;
+    private final GuaranteeSettingsService guaranteeSettingsService;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -61,5 +67,27 @@ public class RestaurantController {
     @PatchMapping("/{id}/attributes")
     public RestaurantResponse updateAttributes(@PathVariable UUID id, @RequestBody Map<String, Object> attributes) {
         return restaurantService.updateAttributes(id, attributes);
+    }
+
+    @GetMapping("/{id}/guarantee-settings")
+    public GuaranteeSettingsResponse getGuaranteeSettings(@PathVariable UUID id,
+            Authentication authentication) {
+        return guaranteeSettingsService.get(id, AuthenticatedCaller.emailOf(authentication));
+    }
+
+    @PutMapping("/{id}/guarantee-settings")
+    public GuaranteeSettingsResponse updateGuaranteeSettings(@PathVariable UUID id,
+            @Valid @RequestBody GuaranteeSettingsRequest request, Authentication authentication) {
+        return guaranteeSettingsService.update(id, request, AuthenticatedCaller.emailOf(authentication));
+    }
+
+    /** See {@code ReservationController#callerEmail}: the AI microservice is not a user. */
+    private static String callerEmail(Authentication authentication) {
+        if (authentication == null) {
+            return null;
+        }
+        boolean isService = authentication.getAuthorities().stream()
+                .anyMatch(authority -> "ROLE_SERVICE".equals(authority.getAuthority()));
+        return isService ? null : authentication.getName();
     }
 }

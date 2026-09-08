@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.callbot.ai.security.AuthenticatedCaller;
 import com.callbot.ai.dto.RescheduleSlotsResponse;
 import com.callbot.ai.dto.ReservationRequest;
 import com.callbot.ai.dto.ReservationResponse;
@@ -40,21 +41,21 @@ public class ReservationController {
     @ResponseStatus(HttpStatus.CREATED)
     public ReservationResponse create(@Valid @RequestBody ReservationRequest request,
             Authentication authentication) {
-        return reservationService.create(request, callerEmail(authentication));
+        return reservationService.create(request, AuthenticatedCaller.emailOf(authentication));
     }
 
     @GetMapping
     public List<ReservationResponse> list(@RequestParam(required = false) UUID restaurantId,
             @RequestParam(required = false) String expand,
             Authentication authentication) {
-        return reservationService.list(restaurantId, parseExpand(expand), callerEmail(authentication));
+        return reservationService.list(restaurantId, parseExpand(expand), AuthenticatedCaller.emailOf(authentication));
     }
 
     @GetMapping("/{id}")
     public ReservationResponse get(@PathVariable UUID id,
             @RequestParam(required = false) String expand,
             Authentication authentication) {
-        return reservationService.get(id, parseExpand(expand), callerEmail(authentication));
+        return reservationService.get(id, parseExpand(expand), AuthenticatedCaller.emailOf(authentication));
     }
 
     /** Slots free for rescheduling this reservation over a 7-day window (defaults to today).
@@ -66,7 +67,7 @@ public class ReservationController {
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
             @RequestParam(required = false) Integer partySize,
             Authentication authentication) {
-        return reservationService.rescheduleSlots(id, fromDate, partySize, callerEmail(authentication));
+        return reservationService.rescheduleSlots(id, fromDate, partySize, AuthenticatedCaller.emailOf(authentication));
     }
 
     /** Parses "table,customer" into the set of related resources to embed. */
@@ -89,26 +90,13 @@ public class ReservationController {
             @Valid @RequestBody ReservationRequest request,
             @RequestParam(defaultValue = "false") boolean notify,
             Authentication authentication) {
-        return reservationService.update(id, request, notify, callerEmail(authentication));
+        return reservationService.update(id, request, notify, AuthenticatedCaller.emailOf(authentication));
     }
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable UUID id, Authentication authentication) {
-        reservationService.delete(id, callerEmail(authentication));
+        reservationService.delete(id, AuthenticatedCaller.emailOf(authentication));
     }
 
-    /**
-     * Email of the authenticated dashboard user, whose data must stay scoped to their
-     * organization. Returns {@code null} for the AI microservice, which authenticates
-     * with an API key, holds the SERVICE role and legitimately acts across restaurants.
-     */
-    private static String callerEmail(Authentication authentication) {
-        if (authentication == null) {
-            return null;
-        }
-        boolean isService = authentication.getAuthorities().stream()
-                .anyMatch(authority -> "ROLE_SERVICE".equals(authority.getAuthority()));
-        return isService ? null : authentication.getName();
-    }
 }

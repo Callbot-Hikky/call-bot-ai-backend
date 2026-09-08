@@ -68,6 +68,39 @@ public class Reservation {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
+    /** Mode in force when the reservation was taken; never rewritten afterwards. */
+    @Builder.Default
+    @Column(name = "guarantee_mode", nullable = false)
+    private String guaranteeMode = GuaranteeMode.NONE.code();
+
+    @Builder.Default
+    @Column(name = "guarantee_status", nullable = false)
+    private String guaranteeStatus = GuaranteeStatus.NOT_REQUIRED;
+
+    /** Total owed for this reservation, in cents: per-guest amount times party size. */
+    @Column(name = "guarantee_amount_cents")
+    private Integer guaranteeAmountCents;
+
+    @Builder.Default
+    @Column(name = "currency", nullable = false)
+    private String currency = "eur";
+
+    /** Staff member who waived the guarantee, when one did. */
+    @Column(name = "guarantee_exempted_by")
+    private UUID guaranteeExemptedBy;
+
+    /** End of the payment window: past this instant the table is released. */
+    @Column(name = "guarantee_expires_at")
+    private OffsetDateTime guaranteeExpiresAt;
+
+    /** Single-use key letting an account-less diner reach their payment page. */
+    @Column(name = "payment_token")
+    private String paymentToken;
+
+    /** Key letting an account-less diner cancel; lives until the service. */
+    @Column(name = "cancellation_token")
+    private String cancellationToken;
+
     @Column(name = "cancelled_at")
     private OffsetDateTime cancelledAt;
 

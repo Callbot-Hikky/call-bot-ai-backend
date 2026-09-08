@@ -51,6 +51,115 @@ public class ReservationMessageTemplates {
                 .formatted(greeting, restaurant.getName(), when, reservation.getPartySize(), address, phone, rescheduleLink);
     }
 
+    /**
+     * Message 1 of the guarantee flow: the diner has just hung up and owes a booking fee.
+     * It states the amount, the refund rule and the deadline, because that is what the
+     * restaurateur is legally required to have told them — and what stops the payment
+     * from looking like a scam when it lands.
+     */
+    public String forClientAwaitingBookingFee(Reservation reservation, Customer customer,
+            Restaurant restaurant) {
+        return """
+                %s,
+                Votre table chez **%s** est retenue, il ne manque que le règlement ⏳
+
+                **Date** : %s
+                **Nombre de personnes** : %d
+                **Frais de réservation** : %s
+
+                Ces frais ne sont pas déduits de l'addition. Ils vous sont intégralement
+                remboursés si vous annulez plus de %d h avant le service.
+
+                👉 [Régler et confirmer ma réservation](%s)
+
+                -# Votre table n'est retenue que %d minutes. Passé ce délai, elle sera remise à disposition."""
+                .formatted(greeting(customer), restaurant.getName(),
+                        formatDateTime(reservation.getStartsAt(), restaurant.getTimezone()),
+                        reservation.getPartySize(),
+                        formatAmount(reservation.getGuaranteeAmountCents(), reservation.getCurrency()),
+                        restaurant.getRefundWindowHours(),
+                        buildPaymentLink(reservation),
+                        GuaranteePolicy.PAYMENT_WINDOW.toMinutes());
+    }
+
+    /**
+     * Message 2 of the guarantee flow: no money is taken now, only a card is kept. Said
+     * plainly and before the form, so a later debit never comes as a surprise.
+     */
+    public String forClientAwaitingNoShowGuarantee(Reservation reservation, Customer customer,
+            Restaurant restaurant) {
+        return """
+                %s,
+                Votre table chez **%s** est retenue, il ne manque qu'une empreinte bancaire ⏳
+
+                **Date** : %s
+                **Nombre de personnes** : %d
+
+                **Aucun montant ne sera débité maintenant.** En cas d'absence non annulée,
+                %s seront prélevés.
+
+                👉 [Enregistrer ma carte et confirmer](%s)
+
+                -# Votre table n'est retenue que %d minutes. Passé ce délai, elle sera remise à disposition."""
+                .formatted(greeting(customer), restaurant.getName(),
+                        formatDateTime(reservation.getStartsAt(), restaurant.getTimezone()),
+                        reservation.getPartySize(),
+                        formatAmount(reservation.getGuaranteeAmountCents(), reservation.getCurrency()),
+                        buildPaymentLink(reservation),
+                        GuaranteePolicy.PAYMENT_WINDOW.toMinutes());
+    }
+
+    /** Message 3 of the guarantee flow: the window closed and the table went back on sale. */
+    public String forClientGuaranteeExpired(Reservation reservation, Customer customer,
+            Restaurant restaurant) {
+        return """
+                %s,
+                Votre table chez **%s** du %s n'a pas pu être confirmée ⌛
+
+                Le délai de %d minutes est écoulé et la table a été remise à disposition.
+                Rien ne vous a été débité.
+
+                Vous pouvez rappeler le restaurant au %s pour réserver à nouveau."""
+                .formatted(greeting(customer), restaurant.getName(),
+                        formatDateTime(reservation.getStartsAt(), restaurant.getTimezone()),
+                        GuaranteePolicy.PAYMENT_WINDOW.toMinutes(),
+                        formatPhoneLink(restaurant.getPhoneNumber()));
+    }
+
+    public String forRestaurantGuaranteeExpired(Reservation reservation, Customer customer,
+            Restaurant restaurant) {
+        return """
+                **Réservation non confirmée** ⌛
+
+                **Client** : %s
+                **Date** : %s
+                **Nombre de personnes** : %d
+
+                Le règlement n'est pas arrivé dans le délai imparti. La table est de nouveau disponible."""
+                .formatted(formatCustomerIdentity(customer),
+                        formatDateTime(reservation.getStartsAt(), restaurant.getTimezone()),
+                        reservation.getPartySize());
+    }
+
+    private String greeting(Customer customer) {
+        return (customer != null && customer.getFirstName() != null)
+                ? "Bonjour **" + customer.getFirstName() + "**"
+                : "Bonjour";
+    }
+
+    /** Amounts live in cents throughout; diners read euros. */
+    private String formatAmount(Integer amountCents, String currency) {
+        if (amountCents == null) {
+            return "montant non renseigné";
+        }
+        String symbol = "eur".equalsIgnoreCase(currency) ? "€" : currency;
+        return String.format(Locale.FRENCH, "%.2f %s", amountCents / 100.0, symbol);
+    }
+
+    private String buildPaymentLink(Reservation reservation) {
+        return baseUrl() + "/client/reservations/payer/" + reservation.getPaymentToken();
+    }
+
     public String forClientUpdated(Reservation reservation, Customer customer, Restaurant restaurant) {
         String greeting = (customer != null && customer.getFirstName() != null)
                 ? "Bonjour **" + customer.getFirstName() + "**"
@@ -151,9 +260,12 @@ public class ReservationMessageTemplates {
     }
 
     private String buildRescheduleLink(Reservation reservation) {
-        String base = (frontend.baseUrl() != null && !frontend.baseUrl().isBlank())
+        return baseUrl() + "/client/reservations/" + reservation.getId() + "/reschedule";
+    }
+
+    private String baseUrl() {
+        return (frontend.baseUrl() != null && !frontend.baseUrl().isBlank())
                 ? frontend.baseUrl().replaceAll("/+$", "")
                 : "";
-        return base + "/client/reservations/" + reservation.getId() + "/reschedule";
     }
 }
