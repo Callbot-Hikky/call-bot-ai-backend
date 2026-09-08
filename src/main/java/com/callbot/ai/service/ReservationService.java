@@ -24,8 +24,10 @@ import com.callbot.ai.dto.ReservationRequest;
 import com.callbot.ai.dto.ReservationResponse;
 import com.callbot.ai.dto.RestaurantSummaryResponse;
 import com.callbot.ai.dto.RestaurantTableResponse;
+import com.callbot.ai.exception.InvalidRequestException;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.model.RestaurantHours;
 import com.callbot.ai.model.RestaurantTable;
@@ -55,9 +57,11 @@ public class ReservationService {
     private final RestaurantHoursRepository hoursRepository;
     private final ApplicationEventPublisher events;
     private final CallerOrganizationResolver callerOrganization;
+    private final GuaranteePolicy guaranteePolicy;
 
     public ReservationResponse create(ReservationRequest request, String callerEmail) {
-        requireRestaurantAccess(request.restaurantId(), callerOrganization.resolve(callerEmail));
+        Restaurant restaurant = requireRestaurantAccess(
+                request.restaurantId(), callerOrganization.resolve(callerEmail));
         Reservation reservation = Reservation.builder()
                 .restaurantId(request.restaurantId())
                 .customerId(request.customerId())
@@ -70,6 +74,8 @@ public class ReservationService {
                 .source(request.source() != null ? request.source() : "callbot")
                 .notes(request.notes())
                 .build();
+        guaranteePolicy.applyOnCreation(reservation, restaurant, exemptingStaff(request, callerEmail));
+
         Reservation saved = reservationRepository.save(reservation);
         events.publishEvent(new ReservationCreatedEvent(saved.getId()));
         return ReservationResponse.from(saved);
@@ -123,9 +129,19 @@ public class ReservationService {
         return ReservationResponse.from(saved);
     }
 
+    /**
+     * Cancels a reservation. Deleting the row would destroy the trace of a payment —
+     * Stripe keeps its own record either way — so the reservation is kept and marked
+     * cancelled, which also frees the table.
+     */
     public void delete(UUID id, String callerEmail) {
         Reservation reservation = find(id, callerEmail);
-        reservationRepository.deleteById(reservation.getId());
+        if (ReservationStatus.CANCELLED.equals(reservation.getStatus())) {
+            return;
+        }
+        reservation.setStatus(ReservationStatus.CANCELLED);
+        reservation.setCancelledAt(OffsetDateTime.now());
+        reservationRepository.save(reservation);
     }
 
     /**
@@ -294,12 +310,27 @@ public class ReservationService {
     }
 
     /** Same rule as {@link #find}, applied to the restaurant a reservation is being attached to. */
-    private void requireRestaurantAccess(UUID restaurantId, Optional<UUID> callerOrganizationId) {
+    private Restaurant requireRestaurantAccess(UUID restaurantId, Optional<UUID> callerOrganizationId) {
         Restaurant restaurant = restaurantRepository.findById(restaurantId)
                 .orElseThrow(() -> new ResourceNotFoundException("Restaurant", restaurantId));
         if (callerOrganizationId.isPresent()
                 && !callerOrganizationId.get().equals(restaurant.getOrganizationId())) {
             throw new ResourceNotFoundException("Restaurant", restaurantId);
         }
+        return restaurant;
+    }
+
+    /**
+     * The staff member waiving the guarantee, if one is. Only a signed-in person can
+     * waive: the exception has to be attributable, otherwise nobody can tell why a
+     * paying mode brings in nothing.
+     */
+    private UUID exemptingStaff(ReservationRequest request, String callerEmail) {
+        if (!Boolean.TRUE.equals(request.exemptGuarantee())) {
+            return null;
+        }
+        return callerOrganization.resolveUserId(callerEmail)
+                .orElseThrow(() -> new InvalidRequestException(
+                        "Only a signed-in staff member can waive a guarantee"));
     }
 }

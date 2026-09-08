@@ -1,0 +1,86 @@
+package com.callbot.ai.service;
+
+import java.security.SecureRandom;
+import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.util.Base64;
+import java.util.UUID;
+
+import org.springframework.stereotype.Component;
+
+import com.callbot.ai.model.GuaranteeMode;
+import com.callbot.ai.model.GuaranteeStatus;
+import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.ReservationStatus;
+import com.callbot.ai.model.Restaurant;
+
+/**
+ * Applies a restaurant's guarantee mode to a reservation being taken.
+ *
+ * <p>Reservations are born on the phone, so the diner cannot pay during the call.
+ * The table is therefore pre-held for a short window while they follow a link; if
+ * the window closes without them acting, the table goes back on sale. The mode and
+ * the amount are copied onto the reservation, never read back from the restaurant:
+ * a restaurateur changing their settings must not alter bookings already accepted.
+ */
+@Component
+public class GuaranteePolicy {
+
+    /** How long the table is held while the diner secures their reservation. */
+    public static final Duration PAYMENT_WINDOW = Duration.ofMinutes(30);
+
+    private static final SecureRandom RANDOM = new SecureRandom();
+
+    /**
+     * @param exemptedBy the staff member waiving the guarantee, or {@code null} when
+     *                   the guarantee is required as usual
+     */
+    public void applyOnCreation(Reservation reservation, Restaurant restaurant, UUID exemptedBy) {
+        GuaranteeMode mode = GuaranteeMode.fromCode(restaurant.getGuaranteeMode());
+        reservation.setGuaranteeMode(mode.code());
+        // The diner has no account: cancelling later is only possible through this key.
+        reservation.setCancellationToken(newToken());
+
+        if (!mode.requiresGuarantee()) {
+            reservation.setGuaranteeStatus(GuaranteeStatus.NOT_REQUIRED);
+            return;
+        }
+
+        reservation.setGuaranteeAmountCents(amountFor(mode, restaurant, reservation.getPartySize()));
+
+        if (exemptedBy != null) {
+            reservation.setGuaranteeStatus(GuaranteeStatus.EXEMPTED);
+            reservation.setGuaranteeExemptedBy(exemptedBy);
+            return;
+        }
+
+        reservation.setStatus(ReservationStatus.AWAITING_PAYMENT);
+        reservation.setGuaranteeStatus(GuaranteeStatus.AWAITING);
+        reservation.setPaymentToken(newToken());
+        reservation.setGuaranteeExpiresAt(OffsetDateTime.now().plus(PAYMENT_WINDOW));
+    }
+
+    /** The damage a no-show causes grows with the party, so amounts are per guest. */
+    private int amountFor(GuaranteeMode mode, Restaurant restaurant, Integer partySize) {
+        Integer perGuest = mode == GuaranteeMode.BOOKING_FEE
+                ? restaurant.getBookingFeeCentsPerGuest()
+                : restaurant.getNoShowPenaltyCentsPerGuest();
+        if (perGuest == null) {
+            // The schema forbids this; a restaurant in a paying mode always has an amount.
+            throw new IllegalStateException(
+                    "Restaurant " + restaurant.getId() + " is in mode " + mode.code() + " without an amount");
+        }
+        if (partySize == null || partySize <= 0) {
+            // Both entry points validate this, so reaching here means a caller bypassed
+            // validation. Charging for one guest would silently undercharge the table.
+            throw new IllegalStateException("Cannot price a guarantee without a party size");
+        }
+        return perGuest * partySize;
+    }
+
+    private static String newToken() {
+        byte[] bytes = new byte[32];
+        RANDOM.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+}

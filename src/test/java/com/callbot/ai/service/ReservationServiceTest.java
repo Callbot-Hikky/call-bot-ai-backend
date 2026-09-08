@@ -22,8 +22,10 @@ import org.springframework.context.ApplicationEventPublisher;
 
 import com.callbot.ai.dto.ReservationRequest;
 import com.callbot.ai.dto.ReservationResponse;
+import com.callbot.ai.exception.InvalidRequestException;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.repository.CustomerRepository;
 import com.callbot.ai.repository.ReservationRepository;
@@ -46,6 +48,8 @@ class ReservationServiceTest {
     private ApplicationEventPublisher events;
     @Mock
     private CallerOrganizationResolver callerOrganization;
+    @Mock
+    private GuaranteePolicy guaranteePolicy;
     @InjectMocks
     private ReservationService reservationService;
 
@@ -62,7 +66,7 @@ class ReservationServiceTest {
         return new ReservationRequest(restaurantId, null, null, null,
                 OffsetDateTime.parse("2030-01-01T19:00:00Z"),
                 OffsetDateTime.parse("2030-01-01T21:00:00Z"),
-                2, null, null, null);
+                2, null, null, null, null);
     }
 
     private Restaurant restaurant() {
@@ -156,6 +160,55 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> reservationService.delete(id, INTRUDER))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(reservationRepository, never()).deleteById(any());
+        verify(reservationRepository, never()).save(any());
+    }
+
+    @Test
+    void delete_cancelsTheReservationInsteadOfErasingIt() {
+        UUID id = UUID.randomUUID();
+        Reservation reservation = reservation(id);
+        when(reservationRepository.findById(id)).thenReturn(Optional.of(reservation));
+        when(callerOrganization.resolve(OWNER)).thenReturn(Optional.of(organizationId));
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
+
+        reservationService.delete(id, OWNER);
+
+        // A reservation can carry a payment; erasing the row would erase its trace.
+        verify(reservationRepository, never()).deleteById(any());
+        verify(reservationRepository).save(reservation);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
+        assertThat(reservation.getCancelledAt()).isNotNull();
+    }
+
+    @Test
+    void delete_whenAlreadyCancelled_doesNothing() {
+        UUID id = UUID.randomUUID();
+        Reservation reservation = reservation(id);
+        reservation.setStatus(ReservationStatus.CANCELLED);
+        when(reservationRepository.findById(id)).thenReturn(Optional.of(reservation));
+        when(callerOrganization.resolve(OWNER)).thenReturn(Optional.of(organizationId));
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
+
+        reservationService.delete(id, OWNER);
+
+        verify(reservationRepository, never()).save(any());
+    }
+
+    @Test
+    void create_whenServiceCallerAsksForAnExemption_isRefused() {
+        // Waiving a guarantee has to be attributable to a person.
+        when(callerOrganization.resolve(SERVICE_CALLER)).thenReturn(Optional.empty());
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
+        when(callerOrganization.resolveUserId(SERVICE_CALLER)).thenReturn(Optional.empty());
+
+        ReservationRequest exempting = new ReservationRequest(restaurantId, null, null, null,
+                OffsetDateTime.parse("2030-01-01T19:00:00Z"),
+                OffsetDateTime.parse("2030-01-01T21:00:00Z"),
+                2, null, null, null, true);
+
+        assertThatThrownBy(() -> reservationService.create(exempting, SERVICE_CALLER))
+                .isInstanceOf(InvalidRequestException.class);
+        verify(reservationRepository, never()).save(any());
     }
 
     @Test

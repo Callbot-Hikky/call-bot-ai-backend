@@ -8,13 +8,38 @@ import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.QueryHints;
 import org.springframework.data.repository.query.Param;
+
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.QueryHint;
 
 import com.callbot.ai.model.Reservation;
 
 public interface ReservationRepository extends JpaRepository<Reservation, UUID> {
 
     List<Reservation> findByRestaurantId(UUID restaurantId);
+
+    /**
+     * Pre-held reservations whose payment window has closed; their tables must be freed.
+     *
+     * <p>Rows are locked and already-locked ones skipped, so several application
+     * instances can run the sweep at once without expiring the same reservation twice
+     * — which would send the diner two "your table is gone" messages.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
+    @Query("""
+            SELECT r FROM Reservation r
+            WHERE r.status = :status AND r.guaranteeExpiresAt < :deadline
+            """)
+    List<Reservation> lockExpiredHolds(@Param("status") String status,
+            @Param("deadline") OffsetDateTime deadline);
+
+    Optional<Reservation> findByPaymentToken(String paymentToken);
+
+    Optional<Reservation> findByCancellationToken(String cancellationToken);
 
     /** Reservations across a set of restaurants — used to scope listings to one organization. */
     List<Reservation> findByRestaurantIdIn(Collection<UUID> restaurantIds);

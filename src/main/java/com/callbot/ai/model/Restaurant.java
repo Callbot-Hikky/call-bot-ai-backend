@@ -59,6 +59,24 @@ public class Restaurant {
     @Column(nullable = false)
     private String locale = "fr";
 
+    /** Which guarantee the restaurant asks of its diners. See {@link GuaranteeMode}. */
+    @Builder.Default
+    @Column(name = "guarantee_mode", nullable = false)
+    private String guaranteeMode = GuaranteeMode.NONE.code();
+
+    /** Booking fee charged per guest, in cents. Required in {@code booking_fee} mode. */
+    @Column(name = "booking_fee_cents_per_guest")
+    private Integer bookingFeeCentsPerGuest;
+
+    /** No-show penalty per guest, in cents. Required in {@code no_show} mode. */
+    @Column(name = "no_show_penalty_cents_per_guest")
+    private Integer noShowPenaltyCentsPerGuest;
+
+    /** Hours before the service up to which a booking fee is fully refunded. */
+    @Builder.Default
+    @Column(name = "refund_window_hours", nullable = false)
+    private Integer refundWindowHours = 48;
+
     @Builder.Default
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
