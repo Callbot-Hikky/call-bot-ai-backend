@@ -145,6 +145,37 @@ class MenuIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void otherOrganizationCannotUploadFiles() throws Exception {
+        String ownerToken = registerAndGetToken("menu-owner3@example.com");
+        String restaurantId = createOwnedRestaurant(ownerToken, "Chez Proprio 2", "+33100000106");
+        String intruderToken = registerAndGetToken("menu-intruder2@example.com");
+        MockMultipartFile image = new MockMultipartFile("file", "carte.png", "image/png", pngBytes());
+
+        mockMvc.perform(multipart("/api/restaurants/" + restaurantId + "/menu/files")
+                .file(image)
+                .header("Authorization", "Bearer " + intruderToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("forbidden"));
+    }
+
+    @Test
+    void fileOfAnotherRestaurantIsNotServed() throws Exception {
+        String token = registerAndGetToken("menu-two-restos@example.com");
+        String restaurantA = createOwnedRestaurant(token, "Resto A", "+33100000107");
+        String restaurantB = createOwnedRestaurant(token, "Resto B", "+33100000108");
+        MockMultipartFile image = new MockMultipartFile("file", "carte.png", "image/png", pngBytes());
+        String menu = mockMvc.perform(multipart("/api/restaurants/" + restaurantA + "/menu/files")
+                .file(image)
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String fileId = JsonPath.read(menu, "$.files[0].id");
+
+        mockMvc.perform(get("/api/public/restaurants/" + restaurantB + "/menu/files/" + fileId))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void adminEndpointWithoutSessionReturns401() throws Exception {
         String token = registerAndGetToken("menu-anon@example.com");
         String restaurantId = createOwnedRestaurant(token, "Chez Anon", "+33100000105");

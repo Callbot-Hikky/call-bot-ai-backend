@@ -1,8 +1,10 @@
 package com.callbot.ai.service;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -57,6 +59,12 @@ public class MenuService {
     /** Cree le menu au premier enregistrement, remplace mode et contenu ensuite. */
     public MenuResponse upsert(UUID restaurantId, MenuRequest request) {
         requireRestaurant(restaurantId);
+        JsonNode manual = request.manual();
+        if (manual != null && !manual.isObject()) {
+            throw new MenuFileException(HttpStatus.BAD_REQUEST, "invalid_manual",
+                    "The manual menu must be a JSON object");
+        }
+        requireModeReady(restaurantId, request.mode(), manual);
         RestaurantMenu menu = menuRepository.findById(restaurantId)
                 .orElseGet(() -> RestaurantMenu.builder().restaurantId(restaurantId).build());
         menu.setMode(request.mode());
@@ -112,21 +120,31 @@ public class MenuService {
         return toResponse(restaurantId, menuRepository.findById(restaurantId).orElse(null));
     }
 
-    /** Reordonne les images : position = index de l'id dans la liste recue. */
+    /**
+     * Reordonne les images : position = index de l'id dans la liste recue. La
+     * liste doit contenir chaque image du menu exactement une fois, sinon deux
+     * images finiraient a la meme position. Le PDF n'a pas d'ordre.
+     */
     public MenuResponse reorder(UUID restaurantId, MenuFileOrderRequest request) {
         requireRestaurant(restaurantId);
-        List<RestaurantMenuFile> files = fileRepository.findByRestaurantIdOrderByPositionAsc(restaurantId);
-        Map<UUID, RestaurantMenuFile> byId = files.stream()
-                .collect(Collectors.toMap(RestaurantMenuFile::getId, Function.identity()));
+        List<RestaurantMenuFile> images = fileRepository.findByRestaurantIdOrderByPositionAsc(restaurantId).stream()
+                .filter(f -> RestaurantMenuFile.KIND_IMAGE.equals(f.getKind()))
+                .toList();
         List<UUID> ids = request.fileIds();
-        for (int i = 0; i < ids.size(); i++) {
-            RestaurantMenuFile file = byId.get(ids.get(i));
-            if (file == null) {
-                throw new ResourceNotFoundException("MenuFile", ids.get(i));
-            }
-            file.setPosition(i);
+        Set<UUID> expected = images.stream().map(RestaurantMenuFile::getId).collect(Collectors.toSet());
+        boolean sameSet = ids.size() == expected.size()
+                && new HashSet<>(ids).size() == ids.size()
+                && expected.containsAll(ids);
+        if (!sameSet) {
+            throw new MenuFileException(HttpStatus.BAD_REQUEST, "invalid_file_order",
+                    "The order must list every image of the menu exactly once");
         }
-        fileRepository.saveAll(files);
+        Map<UUID, RestaurantMenuFile> byId = images.stream()
+                .collect(Collectors.toMap(RestaurantMenuFile::getId, Function.identity()));
+        for (int i = 0; i < ids.size(); i++) {
+            byId.get(ids.get(i)).setPosition(i);
+        }
+        fileRepository.saveAll(images);
         return toResponse(restaurantId, menuRepository.findById(restaurantId).orElse(null));
     }
 
@@ -186,6 +204,22 @@ public class MenuService {
         } catch (JacksonException e) {
             // Injoignable en pratique : la colonne est JSONB, Postgres valide le contenu.
             throw new IllegalStateException("Stored menu content is not valid JSON", e);
+        }
+    }
+
+    /** Un mode ne peut etre publie que si son contenu existe (regles de la spec, section 4). */
+    private void requireModeReady(UUID restaurantId, String mode, JsonNode manual) {
+        boolean ready = switch (mode) {
+            case RestaurantMenu.MODE_PDF ->
+                fileRepository.countByRestaurantIdAndKind(restaurantId, RestaurantMenuFile.KIND_PDF) >= 1;
+            case RestaurantMenu.MODE_IMAGES ->
+                fileRepository.countByRestaurantIdAndKind(restaurantId, RestaurantMenuFile.KIND_IMAGE) >= 1;
+            case RestaurantMenu.MODE_MANUAL -> manual != null && !manual.isEmpty();
+            default -> true;
+        };
+        if (!ready) {
+            throw new MenuFileException(HttpStatus.CONFLICT, "mode_not_ready",
+                    "Mode '" + mode + "' cannot be published: its content is missing");
         }
     }
 

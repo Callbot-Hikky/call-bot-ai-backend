@@ -203,6 +203,74 @@ class MenuServiceTest {
     }
 
     @Test
+    void reorder_partialList_isRejectedWith400() {
+        restaurantExists();
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+        RestaurantMenuFile fileA = RestaurantMenuFile.builder().id(a).restaurantId(restaurantId).kind("image").position(0).contentType("image/png").sizeBytes(1).data(new byte[1]).build();
+        RestaurantMenuFile fileB = RestaurantMenuFile.builder().id(b).restaurantId(restaurantId).kind("image").position(1).contentType("image/png").sizeBytes(1).data(new byte[1]).build();
+        when(fileRepository.findByRestaurantIdOrderByPositionAsc(restaurantId)).thenReturn(List.of(fileA, fileB));
+
+        assertThatThrownBy(() -> menuService.reorder(restaurantId, new MenuFileOrderRequest(List.of(b))))
+                .isInstanceOf(MenuFileException.class)
+                .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
+        verify(fileRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void reorder_unknownId_isRejectedWith400() {
+        restaurantExists();
+        UUID a = UUID.randomUUID();
+        RestaurantMenuFile fileA = RestaurantMenuFile.builder().id(a).restaurantId(restaurantId).kind("image").position(0).contentType("image/png").sizeBytes(1).data(new byte[1]).build();
+        when(fileRepository.findByRestaurantIdOrderByPositionAsc(restaurantId)).thenReturn(List.of(fileA));
+
+        assertThatThrownBy(() -> menuService.reorder(restaurantId, new MenuFileOrderRequest(List.of(UUID.randomUUID()))))
+                .isInstanceOf(MenuFileException.class)
+                .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
+        verify(fileRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void upsert_modeImagesWithoutAnyImage_isRejectedWith409() {
+        restaurantExists();
+        when(fileRepository.countByRestaurantIdAndKind(restaurantId, "image")).thenReturn(0L);
+
+        assertThatThrownBy(() -> menuService.upsert(restaurantId, new MenuRequest("images", null)))
+                .isInstanceOf(MenuFileException.class)
+                .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT));
+        verify(menuRepository, never()).save(any());
+    }
+
+    @Test
+    void upsert_modeManualWithEmptyContent_isRejectedWith409() {
+        restaurantExists();
+
+        assertThatThrownBy(() -> menuService.upsert(restaurantId, new MenuRequest("manual", objectMapper.readTree("{}"))))
+                .isInstanceOf(MenuFileException.class)
+                .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT));
+        verify(menuRepository, never()).save(any());
+    }
+
+    @Test
+    void upsert_manualThatIsNotAnObject_isRejectedWith400() {
+        restaurantExists();
+
+        assertThatThrownBy(() -> menuService.upsert(restaurantId, new MenuRequest("none", objectMapper.readTree("\"hello\""))))
+                .isInstanceOf(MenuFileException.class)
+                .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
+        verify(menuRepository, never()).save(any());
+    }
+
+    @Test
+    void getFile_whenFileBelongsToAnotherRestaurant_throwsNotFound() {
+        UUID fileId = UUID.randomUUID();
+        when(fileRepository.findByIdAndRestaurantId(fileId, restaurantId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> menuService.getFile(restaurantId, fileId))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
     void getPublic_exposesOnlyNameModeManualAndCurrentModeFiles() {
         Restaurant restaurant = Restaurant.builder().id(restaurantId).organizationId(UUID.randomUUID())
                 .name("Chez Hikky").phoneNumber("+33100000000").build();

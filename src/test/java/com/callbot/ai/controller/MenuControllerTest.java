@@ -2,6 +2,8 @@ package com.callbot.ai.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -93,6 +95,7 @@ class MenuControllerTest {
                         {"mode":"manual","manual":{"version":1,"sections":[]}}"""))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.manual.version").value(1));
+        verify(restaurantAccess).requireOwned(eq(restaurantId), any());
     }
 
     @Test
@@ -114,6 +117,19 @@ class MenuControllerTest {
         mockMvc.perform(multipart("/api/restaurants/{id}/menu/files", restaurantId).file(file))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.mode").value("manual"));
+        verify(restaurantAccess).requireOwned(eq(restaurantId), any());
+    }
+
+    @Test
+    void upload_overTenMegabytes_returns413BeforeReadingTheFile() throws Exception {
+        UUID restaurantId = UUID.randomUUID();
+        byte[] huge = new byte[10 * 1024 * 1024 + 1];
+        MockMultipartFile file = new MockMultipartFile("file", "carte.pdf", "application/pdf", huge);
+
+        mockMvc.perform(multipart("/api/restaurants/{id}/menu/files", restaurantId).file(file))
+                .andExpect(status().isPayloadTooLarge())
+                .andExpect(jsonPath("$.error").value("file_too_large"));
+        verify(menuService, never()).upload(any(), any());
     }
 
     @Test
@@ -135,7 +151,23 @@ class MenuControllerTest {
         when(menuService.deleteFile(restaurantId, fileId)).thenReturn(sample(restaurantId));
 
         mockMvc.perform(delete("/api/restaurants/{id}/menu/files/{fileId}", restaurantId, fileId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.restaurantId").value(restaurantId.toString()));
+        verify(restaurantAccess).requireOwned(eq(restaurantId), any());
+        verify(menuService).deleteFile(restaurantId, fileId);
+    }
+
+    @Test
+    void reorder_withValidList_returns200AndChecksOwnership() throws Exception {
+        UUID restaurantId = UUID.randomUUID();
+        UUID a = UUID.randomUUID();
+        when(menuService.reorder(eq(restaurantId), any())).thenReturn(sample(restaurantId));
+
+        mockMvc.perform(put("/api/restaurants/{id}/menu/files/order", restaurantId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"fileIds\":[\"" + a + "\"]}"))
                 .andExpect(status().isOk());
+        verify(restaurantAccess).requireOwned(eq(restaurantId), any());
     }
 
     @Test

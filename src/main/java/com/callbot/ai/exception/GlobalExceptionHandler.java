@@ -49,7 +49,8 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ApiError> handleAccessDenied(AccessDeniedException ex) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                .body(ApiError.of(HttpStatus.FORBIDDEN.value(), "forbidden", ex.getMessage()));
+                .body(ApiError.of(HttpStatus.FORBIDDEN.value(), "forbidden",
+                        "You do not have access to this restaurant"));
     }
 
     @ExceptionHandler(MenuFileException.class)

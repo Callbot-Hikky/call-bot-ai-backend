@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.UUID;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,8 +18,10 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.callbot.ai.dto.MenuFileOrderRequest;
+import com.callbot.ai.dto.MenuLimits;
 import com.callbot.ai.dto.MenuRequest;
 import com.callbot.ai.dto.MenuResponse;
+import com.callbot.ai.exception.MenuFileException;
 import com.callbot.ai.security.RestaurantAccess;
 import com.callbot.ai.service.MenuService;
 
@@ -51,6 +54,12 @@ public class MenuController {
     public MenuResponse upload(@PathVariable UUID restaurantId,
             @RequestPart("file") MultipartFile file, Authentication authentication) {
         restaurantAccess.requireOwned(restaurantId, authentication);
+        // Borne la lecture en memoire avant getBytes() ; la limite par type est verifiee par le service.
+        long max = MenuLimits.DEFAULT.pdfMaxBytes();
+        if (file.getSize() > max) {
+            throw new MenuFileException(HttpStatus.PAYLOAD_TOO_LARGE, "file_too_large",
+                    "File exceeds the maximum size of " + max + " bytes");
+        }
         try {
             return menuService.upload(restaurantId, file.getBytes());
         } catch (IOException e) {
