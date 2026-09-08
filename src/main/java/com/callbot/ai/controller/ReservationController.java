@@ -9,6 +9,7 @@ import java.util.stream.Collectors;
 
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -37,20 +38,23 @@ public class ReservationController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public ReservationResponse create(@Valid @RequestBody ReservationRequest request) {
-        return reservationService.create(request);
+    public ReservationResponse create(@Valid @RequestBody ReservationRequest request,
+            Authentication authentication) {
+        return reservationService.create(request, callerEmail(authentication));
     }
 
     @GetMapping
     public List<ReservationResponse> list(@RequestParam(required = false) UUID restaurantId,
-            @RequestParam(required = false) String expand) {
-        return reservationService.list(restaurantId, parseExpand(expand));
+            @RequestParam(required = false) String expand,
+            Authentication authentication) {
+        return reservationService.list(restaurantId, parseExpand(expand), callerEmail(authentication));
     }
 
     @GetMapping("/{id}")
     public ReservationResponse get(@PathVariable UUID id,
-            @RequestParam(required = false) String expand) {
-        return reservationService.get(id, parseExpand(expand));
+            @RequestParam(required = false) String expand,
+            Authentication authentication) {
+        return reservationService.get(id, parseExpand(expand), callerEmail(authentication));
     }
 
     /** Slots free for rescheduling this reservation over a 7-day window (defaults to today).
@@ -60,8 +64,9 @@ public class ReservationController {
     public RescheduleSlotsResponse rescheduleSlots(@PathVariable UUID id,
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
-            @RequestParam(required = false) Integer partySize) {
-        return reservationService.rescheduleSlots(id, fromDate, partySize);
+            @RequestParam(required = false) Integer partySize,
+            Authentication authentication) {
+        return reservationService.rescheduleSlots(id, fromDate, partySize, callerEmail(authentication));
     }
 
     /** Parses "table,customer" into the set of related resources to embed. */
@@ -82,13 +87,28 @@ public class ReservationController {
     @PutMapping("/{id}")
     public ReservationResponse update(@PathVariable UUID id,
             @Valid @RequestBody ReservationRequest request,
-            @RequestParam(defaultValue = "false") boolean notify) {
-        return reservationService.update(id, request, notify);
+            @RequestParam(defaultValue = "false") boolean notify,
+            Authentication authentication) {
+        return reservationService.update(id, request, notify, callerEmail(authentication));
     }
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable UUID id) {
-        reservationService.delete(id);
+    public void delete(@PathVariable UUID id, Authentication authentication) {
+        reservationService.delete(id, callerEmail(authentication));
+    }
+
+    /**
+     * Email of the authenticated dashboard user, whose data must stay scoped to their
+     * organization. Returns {@code null} for the AI microservice, which authenticates
+     * with an API key, holds the SERVICE role and legitimately acts across restaurants.
+     */
+    private static String callerEmail(Authentication authentication) {
+        if (authentication == null) {
+            return null;
+        }
+        boolean isService = authentication.getAuthorities().stream()
+                .anyMatch(authority -> "ROLE_SERVICE".equals(authority.getAuthority()));
+        return isService ? null : authentication.getName();
     }
 }
