@@ -37,6 +37,38 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
     List<Reservation> lockExpiredHolds(@Param("status") String status,
             @Param("deadline") OffsetDateTime deadline);
 
+    /**
+     * Organizations holding money that is due to leave for their bank.
+     *
+     * <p>Reservations carry a restaurant, restaurants carry an organization, and the
+     * payout is made per connected account — hence the join. Refunded reservations are
+     * excluded: that money went back to the diner.
+     */
+    @Query("""
+            SELECT DISTINCT s.organizationId FROM Reservation r, Restaurant s
+            WHERE r.restaurantId = s.id
+              AND r.paidAt IS NOT NULL
+              AND r.paidOutAt IS NULL
+              AND r.refundedAt IS NULL
+              AND r.payoutEligibleAt < :now
+            """)
+    List<UUID> findOrganizationsWithDuePayouts(@Param("now") OffsetDateTime now);
+
+    /** The reservations making up one organization's due payout, locked while it is built. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
+    @Query("""
+            SELECT r FROM Reservation r, Restaurant s
+            WHERE r.restaurantId = s.id
+              AND s.organizationId = :organizationId
+              AND r.paidAt IS NOT NULL
+              AND r.paidOutAt IS NULL
+              AND r.refundedAt IS NULL
+              AND r.payoutEligibleAt < :now
+            """)
+    List<Reservation> lockDuePayoutsFor(@Param("organizationId") UUID organizationId,
+            @Param("now") OffsetDateTime now);
+
     Optional<Reservation> findByPaymentToken(String paymentToken);
 
     Optional<Reservation> findByCancellationToken(String cancellationToken);

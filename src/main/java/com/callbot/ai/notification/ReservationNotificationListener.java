@@ -1,5 +1,8 @@
 package com.callbot.ai.notification;
 
+import java.util.Optional;
+import java.util.UUID;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -42,75 +45,98 @@ public class ReservationNotificationListener {
         this.discord = discord;
     }
 
+    /**
+     * The three rows every message needs. Loaded once, by {@link #contextFor}, because
+     * a notification with a missing restaurant or reservation is not a message worth
+     * half-sending — it is a bug to log and drop.
+     */
+    private record Context(Reservation reservation, Customer customer, Restaurant restaurant) {
+    }
+
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public void onReservationCreated(ReservationCreatedEvent event) {
-        Reservation reservation = reservationRepository.findById(event.reservationId()).orElse(null);
-        if (reservation == null) {
-            log.warn("Reservation {} not found when handling created event", event.reservationId());
-            return;
-        }
-        Restaurant restaurant = restaurantRepository.findById(reservation.getRestaurantId()).orElse(null);
-        if (restaurant == null) {
-            log.warn("Restaurant {} not found for reservation {}", reservation.getRestaurantId(), reservation.getId());
-            return;
-        }
-        Customer customer = reservation.getCustomerId() != null
-                ? customerRepository.findById(reservation.getCustomerId()).orElse(null)
-                : null;
-
-        // A reservation awaiting its guarantee is not confirmed: telling the diner it is
-        // would promise a table that is only held for a few more minutes.
-        if (GuaranteeStatus.AWAITING.equals(reservation.getGuaranteeStatus())) {
-            discord.sendClientSmsMessage(
-                    GuaranteeMode.NO_SHOW.code().equals(reservation.getGuaranteeMode())
-                            ? templates.forClientAwaitingNoShowGuarantee(reservation, customer, restaurant)
-                            : templates.forClientAwaitingBookingFee(reservation, customer, restaurant));
-        } else {
-            discord.sendClientSmsMessage(templates.forClient(reservation, customer, restaurant));
-        }
-        discord.sendReservationMessage(templates.forRestaurant(reservation, customer, restaurant));
+        contextFor(event.reservationId(), "created").ifPresent(context -> {
+            // A reservation awaiting its guarantee is not confirmed: telling the diner it is
+            // would promise a table that is only held for a few more minutes.
+            if (GuaranteeStatus.AWAITING.equals(context.reservation().getGuaranteeStatus())) {
+                discord.sendClientSmsMessage(
+                        GuaranteeMode.NO_SHOW.code().equals(context.reservation().getGuaranteeMode())
+                                ? templates.forClientAwaitingNoShowGuarantee(
+                                        context.reservation(), context.customer(), context.restaurant())
+                                : templates.forClientAwaitingBookingFee(
+                                        context.reservation(), context.customer(), context.restaurant()));
+            } else {
+                discord.sendClientSmsMessage(templates.forClient(
+                        context.reservation(), context.customer(), context.restaurant()));
+            }
+            discord.sendReservationMessage(templates.forRestaurant(
+                    context.reservation(), context.customer(), context.restaurant()));
+        });
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public void onGuaranteeExpired(ReservationGuaranteeExpiredEvent event) {
-        Reservation reservation = reservationRepository.findById(event.reservationId()).orElse(null);
-        if (reservation == null) {
-            log.warn("Reservation {} not found when handling guarantee expiry", event.reservationId());
-            return;
-        }
-        Restaurant restaurant = restaurantRepository.findById(reservation.getRestaurantId()).orElse(null);
-        if (restaurant == null) {
-            log.warn("Restaurant {} not found for reservation {}", reservation.getRestaurantId(), reservation.getId());
-            return;
-        }
-        Customer customer = reservation.getCustomerId() != null
-                ? customerRepository.findById(reservation.getCustomerId()).orElse(null)
-                : null;
+        contextFor(event.reservationId(), "guarantee expiry").ifPresent(context -> {
+            discord.sendClientSmsMessage(templates.forClientGuaranteeExpired(
+                    context.reservation(), context.customer(), context.restaurant()));
+            discord.sendReservationMessage(templates.forRestaurantGuaranteeExpired(
+                    context.reservation(), context.customer(), context.restaurant()));
+        });
+    }
 
-        discord.sendClientSmsMessage(templates.forClientGuaranteeExpired(reservation, customer, restaurant));
-        discord.sendReservationMessage(templates.forRestaurantGuaranteeExpired(reservation, customer, restaurant));
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+    public void onReservationConfirmed(ReservationConfirmedEvent event) {
+        contextFor(event.reservationId(), "payment").ifPresent(context -> {
+            discord.sendClientSmsMessage(templates.forClientConfirmedAfterPayment(
+                    context.reservation(), context.customer(), context.restaurant()));
+            discord.sendReservationMessage(templates.forRestaurantConfirmedAfterPayment(
+                    context.reservation(), context.customer(), context.restaurant()));
+        });
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+    public void onCancelledByGuest(ReservationCancelledByGuestEvent event) {
+        contextFor(event.reservationId(), "guest cancellation").ifPresent(context -> {
+            discord.sendClientSmsMessage(event.refunded()
+                    ? templates.forClientRefundIssued(
+                            context.reservation(), context.customer(), context.restaurant())
+                    : templates.forClientCancellationConfirmed(
+                            context.reservation(), context.customer(), context.restaurant()));
+            discord.sendReservationMessage(templates.forRestaurantCancelledByGuest(
+                    context.reservation(), context.customer(), context.restaurant(), event.refunded()));
+        });
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public void onReservationUpdated(ReservationUpdatedEvent event) {
-        Reservation reservation = reservationRepository.findById(event.reservationId()).orElse(null);
+        contextFor(event.reservationId(), "updated").ifPresent(context -> {
+            discord.sendClientSmsMessage(templates.forClientUpdated(
+                    context.reservation(), context.customer(), context.restaurant()));
+            discord.sendReservationMessage(templates.forRestaurantUpdated(
+                    context.reservation(), context.customer(), context.restaurant()));
+        });
+    }
+
+    private Optional<Context> contextFor(UUID reservationId, String what) {
+        Reservation reservation = reservationRepository.findById(reservationId).orElse(null);
         if (reservation == null) {
-            log.warn("Reservation {} not found when handling updated event", event.reservationId());
-            return;
+            log.warn("Reservation {} not found when handling {} event", reservationId, what);
+            return Optional.empty();
         }
         Restaurant restaurant = restaurantRepository.findById(reservation.getRestaurantId()).orElse(null);
         if (restaurant == null) {
-            log.warn("Restaurant {} not found for reservation {}", reservation.getRestaurantId(), reservation.getId());
-            return;
+            log.warn("Restaurant {} not found for reservation {}",
+                    reservation.getRestaurantId(), reservation.getId());
+            return Optional.empty();
         }
         Customer customer = reservation.getCustomerId() != null
                 ? customerRepository.findById(reservation.getCustomerId()).orElse(null)
                 : null;
-
-        discord.sendClientSmsMessage(templates.forClientUpdated(reservation, customer, restaurant));
-        discord.sendReservationMessage(templates.forRestaurantUpdated(reservation, customer, restaurant));
+        return Optional.of(new Context(reservation, customer, restaurant));
     }
 }

@@ -53,8 +53,12 @@ public class SecurityConfig {
                         .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
-                        // Payment webhook: unauthenticated, trust is the provider's signed webhook header.
+                        // Payment webhooks: unauthenticated, trust is the provider's signed header.
                         .requestMatchers(HttpMethod.POST, "/api/offers/webhook").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/payments/webhook").permitAll()
+                        // Diner-facing pages: the caller booked by telephone and has no
+                        // account, so the random token in the URL is the whole credential.
+                        .requestMatchers("/api/public/reservations/**").permitAll()
                         // Call endpoints reserved for the AI microservice (API key).
                         .requestMatchers(HttpMethod.POST, "/api/calls/ingest").hasRole("SERVICE")
                         .requestMatchers(HttpMethod.GET, "/api/calls/context", "/api/calls/availability")

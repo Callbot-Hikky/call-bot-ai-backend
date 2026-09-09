@@ -141,6 +141,131 @@ public class ReservationMessageTemplates {
                         reservation.getPartySize());
     }
 
+    /**
+     * Message 4: the fee is in and the table is theirs. It repeats the refund rule and
+     * carries the cancellation link, so the diner never has to phone to give a table back.
+     */
+    public String forClientConfirmedAfterPayment(Reservation reservation, Customer customer,
+            Restaurant restaurant) {
+        return """
+                %s,
+                Votre réservation chez **%s** est confirmée ✅
+
+                **Date** : %s
+                **Nombre de personnes** : %d
+                **Adresse** : %s
+                **Réglé** : %s
+
+                Ces frais ne sont pas déduits de l'addition. Ils vous seront intégralement
+                remboursés si vous annulez plus de %d h avant le service.
+
+                -# Un empêchement ? [Annuler ma réservation](%s)
+
+                À très vite !"""
+                .formatted(greeting(customer), restaurant.getName(),
+                        formatDateTime(reservation.getStartsAt(), restaurant.getTimezone()),
+                        reservation.getPartySize(),
+                        formatAddress(restaurant),
+                        formatAmount(reservation.getGuaranteeAmountCents(), reservation.getCurrency()),
+                        refundWindowOf(reservation),
+                        buildCancellationLink(reservation));
+    }
+
+    /**
+     * Message 5: the reservation is cancelled and nothing comes back. Says why in one
+     * line — a diner who reads only that the money is kept will assume a mistake.
+     */
+    public String forClientCancellationConfirmed(Reservation reservation, Customer customer,
+            Restaurant restaurant) {
+        String moneyNote = reservation.getGuaranteeAmountCents() == null
+                ? "Rien ne vous a été débité."
+                : ("Les frais de réservation restent acquis au restaurant : l'annulation "
+                        + "intervient moins de " + refundWindowOf(reservation) + " h avant le service.");
+
+        return """
+                %s,
+                Votre réservation chez **%s** du %s est annulée.
+
+                %s
+
+                Vous pouvez rappeler le restaurant au %s pour réserver à nouveau."""
+                .formatted(greeting(customer), restaurant.getName(),
+                        formatDateTime(reservation.getStartsAt(), restaurant.getTimezone()),
+                        moneyNote,
+                        formatPhoneLink(restaurant.getPhoneNumber()));
+    }
+
+    /** Message 6: cancelled in time, money on its way back. */
+    public String forClientRefundIssued(Reservation reservation, Customer customer,
+            Restaurant restaurant) {
+        return """
+                %s,
+                Votre réservation chez **%s** du %s est annulée, et vos frais de
+                réservation vous sont remboursés 💶
+
+                **Remboursé** : %s
+
+                Le remboursement apparaît sur votre relevé sous quelques jours ouvrés,
+                sur le moyen de paiement utilisé.
+
+                Vous pouvez rappeler le restaurant au %s pour réserver à nouveau."""
+                .formatted(greeting(customer), restaurant.getName(),
+                        formatDateTime(reservation.getStartsAt(), restaurant.getTimezone()),
+                        formatAmount(reservation.getRefundedAmountCents(), reservation.getCurrency()),
+                        formatPhoneLink(restaurant.getPhoneNumber()));
+    }
+
+    public String forRestaurantConfirmedAfterPayment(Reservation reservation, Customer customer,
+            Restaurant restaurant) {
+        return """
+                **Réservation réglée et confirmée** ✅
+
+                **Client** : %s
+                **Date** : %s
+                **Nombre de personnes** : %d
+                **Encaissé** : %s"""
+                .formatted(formatCustomerIdentity(customer),
+                        formatDateTime(reservation.getStartsAt(), restaurant.getTimezone()),
+                        reservation.getPartySize(),
+                        formatAmount(reservation.getGuaranteeAmountCents(), reservation.getCurrency()));
+    }
+
+    /** The restaurateur needs to know the table is free again, and whether they keep the fee. */
+    public String forRestaurantCancelledByGuest(Reservation reservation, Customer customer,
+            Restaurant restaurant, boolean refunded) {
+        String moneyNote = refunded
+                ? "Les frais ont été remboursés au client (annulation dans les délais)."
+                : (reservation.getGuaranteeAmountCents() == null
+                        ? "Aucun montant n'était en jeu."
+                        : "Les frais de " + formatAmount(reservation.getGuaranteeAmountCents(),
+                                reservation.getCurrency()) + " vous restent acquis.");
+
+        return """
+                **Réservation annulée par le client**
+
+                **Client** : %s
+                **Date** : %s
+                **Nombre de personnes** : %d
+
+                %s
+                La table est de nouveau disponible."""
+                .formatted(formatCustomerIdentity(customer),
+                        formatDateTime(reservation.getStartsAt(), restaurant.getTimezone()),
+                        reservation.getPartySize(),
+                        moneyNote);
+    }
+
+    /** The window frozen on the reservation, which is the one the diner was promised. */
+    private int refundWindowOf(Reservation reservation) {
+        return reservation.getGuaranteeRefundWindowHours() == null
+                ? 0
+                : reservation.getGuaranteeRefundWindowHours();
+    }
+
+    private String buildCancellationLink(Reservation reservation) {
+        return baseUrl() + "/client/reservations/annuler/" + reservation.getCancellationToken();
+    }
+
     private String greeting(Customer customer) {
         return (customer != null && customer.getFirstName() != null)
                 ? "Bonjour **" + customer.getFirstName() + "**"

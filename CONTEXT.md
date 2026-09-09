@@ -70,6 +70,45 @@ Délai laissé au client, à compter de la prise de réservation, pour fournir l
 La table lui est réservée pendant toute sa durée. À son terme, la réservation
 pré-tenue disparaît et le client en est informé.
 
+## Compte de paiement
+
+Compte, ouvert au nom du restaurateur auprès du prestataire de paiement, sur lequel
+arrivent les frais réglés par ses clients. Il appartient **à l'organisation**, non au
+restaurant : un groupe qui exploite plusieurs établissements encaisse sur un seul compte.
+
+L'argent des clients n'est jamais celui d'Alloquence : il est versé au restaurateur dès
+l'encaissement, et Alloquence ne fait que retenir sa commission au passage.
+
+Tant que ce compte n'est **pas validé** par le prestataire, aucun mode payant n'est
+activable : le client tomberait sur une page de paiement en échec après s'être vu
+annoncer une table retenue.
+
+## Commission
+
+Part qu'Alloquence conserve sur les **frais de réservation** : un pourcentage du montant
+plus une somme fixe.
+
+Ne s'applique **jamais aux pénalités no-show** : celles-ci dédommagent un restaurateur
+d'une table perdue, et en prélever une part serait facturer le malheur d'autrui.
+
+## Reversement
+
+Envoi vers la banque du restaurateur des frais encaissés, net de la commission.
+
+N'a lieu qu'**un jour après le service**, jamais avant : un client qui annule dans sa
+fenêtre de remboursement doit pouvoir être remboursé sur une somme qui n'est pas partie.
+
+## Lien du client
+
+Adresse à usage personnel envoyée au client par message, seul moyen dont il dispose
+pour agir sur sa réservation : il a réservé par téléphone et n'a pas de compte.
+
+Il en existe deux, distincts :
+
+- le **lien de paiement**, valable le temps de la fenêtre de paiement et à usage unique ;
+- le **lien d'annulation**, qui survit au règlement — c'est justement après avoir payé
+  qu'on peut avoir besoin d'annuler.
+
 ## No-show
 
 Client qui ne se présente pas et n'a pas annulé. C'est un **constat humain**, posé par
