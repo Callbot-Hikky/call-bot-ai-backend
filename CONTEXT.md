@@ -72,9 +72,12 @@ pré-tenue disparaît et le client en est informé.
 
 ## Compte de paiement
 
-Compte, ouvert au nom du restaurateur auprès du prestataire de paiement, sur lequel
-arrivent les frais réglés par ses clients. Il appartient **à l'organisation**, non au
-restaurant : un groupe qui exploite plusieurs établissements encaisse sur un seul compte.
+Compte, ouvert auprès du prestataire de paiement, sur lequel arrivent les frais réglés
+par les clients d'un restaurant.
+
+Il appartient **au restaurant**, un par établissement. Un tel compte est lié à une entité
+légale et à un compte bancaire : deux restaurants d'un même propriétaire sont souvent deux
+sociétés, et un compte partagé verserait l'argent de l'un sur la banque de l'autre.
 
 L'argent des clients n'est jamais celui d'Alloquence : il est versé au restaurateur dès
 l'encaissement, et Alloquence ne fait que retenir sa commission au passage.

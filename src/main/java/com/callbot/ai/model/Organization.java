@@ -33,33 +33,6 @@ public class Organization {
     @Column(nullable = false)
     private String name;
 
-    /** Stripe connected account holding this organization's diner payments. */
-    @Column(name = "stripe_account_id")
-    private String stripeAccountId;
-
-    /** Stripe lets the account take payments; a paying guarantee mode needs this. */
-    @Builder.Default
-    @Column(name = "stripe_charges_enabled", nullable = false)
-    private boolean stripeChargesEnabled = false;
-
-    @Builder.Default
-    @Column(name = "stripe_payouts_enabled", nullable = false)
-    private boolean stripePayoutsEnabled = false;
-
-    @Builder.Default
-    @Column(name = "stripe_details_submitted", nullable = false)
-    private boolean stripeDetailsSubmitted = false;
-
-    @Column(name = "stripe_onboarded_at")
-    private OffsetDateTime stripeOnboardedAt;
-
-    /** Bank disputes on this organization's booking fees, absorbed by Alloquence. */
-    @Builder.Default
-    @Column(name = "stripe_dispute_count", nullable = false)
-    private int stripeDisputeCount = 0;
-
-    @Column(name = "stripe_last_dispute_at")
-    private OffsetDateTime stripeLastDisputeAt;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

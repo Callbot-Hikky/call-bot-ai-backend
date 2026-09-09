@@ -9,5 +9,5 @@ import com.callbot.ai.model.Payout;
 
 public interface PayoutRepository extends JpaRepository<Payout, UUID> {
 
-    List<Payout> findByOrganizationIdOrderByCreatedAtDesc(UUID organizationId);
+    List<Payout> findByRestaurantIdOrderByCreatedAtDesc(UUID restaurantId);
 }

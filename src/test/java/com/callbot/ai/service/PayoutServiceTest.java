@@ -18,14 +18,14 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import com.callbot.ai.model.Organization;
+import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.model.Payout;
 import com.callbot.ai.model.PayoutStatus;
 import com.callbot.ai.model.Reservation;
-import com.callbot.ai.repository.OrganizationRepository;
+import com.callbot.ai.repository.RestaurantRepository;
 import com.callbot.ai.repository.PayoutRepository;
 import com.callbot.ai.repository.ReservationRepository;
-import com.callbot.ai.security.CallerOrganizationResolver;
+import com.callbot.ai.security.OrganizationScope;
 
 @ExtendWith(MockitoExtension.class)
 class PayoutServiceTest {
@@ -33,15 +33,15 @@ class PayoutServiceTest {
     @Mock
     private ReservationRepository reservationRepository;
     @Mock
-    private OrganizationRepository organizationRepository;
+    private RestaurantRepository restaurantRepository;
     @Mock
     private PayoutRepository payoutRepository;
     @Mock
-    private CallerOrganizationResolver callerOrganization;
+    private OrganizationScope scope;
     @InjectMocks
     private PayoutService service;
 
-    private final UUID organizationId = UUID.randomUUID();
+    private final UUID restaurantId = UUID.randomUUID();
 
     private Reservation paid(int amountCents, int feeCents, String currency) {
         return Reservation.builder()
@@ -68,9 +68,9 @@ class PayoutServiceTest {
     void claimsWhatIsLeftAfterTheCommission() {
         payoutsAreSaved();
         List<Reservation> due = List.of(paid(9000, 500, "eur"), paid(3000, 200, "eur"));
-        when(reservationRepository.lockDuePayoutsFor(eq(organizationId), any())).thenReturn(due);
+        when(reservationRepository.lockDuePayoutsFor(eq(restaurantId), any())).thenReturn(due);
 
-        List<Payout> claimed = service.claim(organizationId, OffsetDateTime.now());
+        List<Payout> claimed = service.claim(restaurantId, OffsetDateTime.now());
 
         assertThat(claimed).singleElement().satisfies(payout -> {
             assertThat(payout.getAmountCents()).isEqualTo(8500 + 2800);
@@ -87,10 +87,10 @@ class PayoutServiceTest {
     @Test
     void neverMixesCurrenciesIntoOneTransfer() {
         payoutsAreSaved();
-        when(reservationRepository.lockDuePayoutsFor(eq(organizationId), any()))
+        when(reservationRepository.lockDuePayoutsFor(eq(restaurantId), any()))
                 .thenReturn(List.of(paid(9000, 500, "eur"), paid(2000, 150, "chf")));
 
-        List<Payout> claimed = service.claim(organizationId, OffsetDateTime.now());
+        List<Payout> claimed = service.claim(restaurantId, OffsetDateTime.now());
 
         assertThat(claimed).hasSize(2);
         assertThat(claimed).extracting(Payout::getCurrency).containsExactlyInAnyOrder("eur", "chf");
@@ -99,9 +99,9 @@ class PayoutServiceTest {
 
     @Test
     void reservationsTakenByAnotherInstanceLeaveNothingToClaim() {
-        when(reservationRepository.lockDuePayoutsFor(eq(organizationId), any())).thenReturn(List.of());
+        when(reservationRepository.lockDuePayoutsFor(eq(restaurantId), any())).thenReturn(List.of());
 
-        assertThat(service.claim(organizationId, OffsetDateTime.now())).isEmpty();
+        assertThat(service.claim(restaurantId, OffsetDateTime.now())).isEmpty();
 
         verify(payoutRepository, never()).save(any());
     }
@@ -138,11 +138,11 @@ class PayoutServiceTest {
     }
 
     @Test
-    void anOrganizationStripeHasNotClearedForPayoutsIsNotPayable() {
-        when(organizationRepository.findById(organizationId)).thenReturn(Optional.of(
-                Organization.builder().id(organizationId).stripeAccountId("acct_1")
+    void aRestaurantStripeHasNotClearedForPayoutsIsNotPayable() {
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(
+                Restaurant.builder().id(restaurantId).stripeAccountId("acct_1")
                         .stripePayoutsEnabled(false).build()));
 
-        assertThat(service.payableOrganization(organizationId)).isEmpty();
+        assertThat(service.payableRestaurant(restaurantId)).isEmpty();
     }
 }

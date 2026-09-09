@@ -1,6 +1,6 @@
 package com.callbot.ai.dto;
 
-import com.callbot.ai.model.Organization;
+import com.callbot.ai.model.Restaurant;
 
 /**
  * State of a restaurateur's payment account, as the back-office needs it to decide
@@ -14,13 +14,13 @@ public record ConnectAccountResponse(
         int disputeCount,
         long paidReservationCount) {
 
-    public static ConnectAccountResponse from(Organization organization, long paidReservationCount) {
+    public static ConnectAccountResponse from(Restaurant restaurant, long paidReservationCount) {
         return new ConnectAccountResponse(
-                organization.getStripeAccountId() != null,
-                organization.isStripeChargesEnabled(),
-                organization.isStripePayoutsEnabled(),
-                organization.isStripeDetailsSubmitted(),
-                organization.getStripeDisputeCount(),
+                restaurant.getStripeAccountId() != null,
+                restaurant.isStripeChargesEnabled(),
+                restaurant.isStripePayoutsEnabled(),
+                restaurant.isStripeDetailsSubmitted(),
+                restaurant.getStripeDisputeCount(),
                 paidReservationCount);
     }
 }

@@ -38,8 +38,8 @@ public class Payout {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "organization_id", nullable = false)
-    private UUID organizationId;
+    @Column(name = "restaurant_id", nullable = false)
+    private UUID restaurantId;
 
     @Column(name = "stripe_payout_id")
     private String stripePayoutId;

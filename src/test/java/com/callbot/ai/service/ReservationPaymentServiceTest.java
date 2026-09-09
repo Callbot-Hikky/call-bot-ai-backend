@@ -28,14 +28,12 @@ import com.callbot.ai.gateway.stripe.ConnectWebhookEvent;
 import com.callbot.ai.gateway.stripe.StripeConnectGateway;
 import com.callbot.ai.model.GuaranteeMode;
 import com.callbot.ai.model.GuaranteeStatus;
-import com.callbot.ai.model.Organization;
 import com.callbot.ai.model.Reservation;
 import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.notification.ReservationCancelledByGuestEvent;
 import com.callbot.ai.notification.ReservationConfirmedEvent;
 import com.callbot.ai.repository.CustomerRepository;
-import com.callbot.ai.repository.OrganizationRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 
@@ -46,8 +44,6 @@ class ReservationPaymentServiceTest {
     private ReservationRepository reservationRepository;
     @Mock
     private RestaurantRepository restaurantRepository;
-    @Mock
-    private OrganizationRepository organizationRepository;
     @Mock
     private CustomerRepository customerRepository;
     @Mock
@@ -92,10 +88,11 @@ class ReservationPaymentServiceTest {
                         .organizationId(organizationId).build()));
     }
 
-    private void restaurantAndOrganizationExist() {
-        restaurantExists();
-        when(organizationRepository.findById(organizationId)).thenReturn(Optional.of(
-                Organization.builder().id(organizationId).stripeAccountId(ACCOUNT)
+    /** The account lives on the restaurant, so one stub covers both. */
+    private void restaurantWithAPaymentAccount() {
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(
+                Restaurant.builder().id(restaurantId).name("Chez Payant")
+                        .organizationId(organizationId).stripeAccountId(ACCOUNT)
                         .stripeChargesEnabled(true).build()));
     }
 
@@ -103,7 +100,7 @@ class ReservationPaymentServiceTest {
     void checkoutHandsStripeTheAmountTheCommissionAndTheRestaurantsAccount() {
         Reservation reservation = awaitingPayment();
         when(reservationRepository.findByPaymentToken(PAYMENT_TOKEN)).thenReturn(Optional.of(reservation));
-        restaurantAndOrganizationExist();
+        restaurantWithAPaymentAccount();
         when(connect.createBookingFeeCheckout(any()))
                 .thenReturn(new CheckoutSession("cs_1", "https://checkout.stripe.com/cs_1"));
 
@@ -237,7 +234,7 @@ class ReservationPaymentServiceTest {
         Reservation reservation = awaitingPayment();
         reservation.setStripeSessionId("cs_old");
         when(reservationRepository.findByPaymentToken(PAYMENT_TOKEN)).thenReturn(Optional.of(reservation));
-        restaurantAndOrganizationExist();
+        restaurantWithAPaymentAccount();
         when(connect.createBookingFeeCheckout(any()))
                 .thenReturn(new CheckoutSession("cs_new", "https://checkout.stripe.com/cs_new"));
 

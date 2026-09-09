@@ -85,14 +85,14 @@ class ReservationCheckoutIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void onboardingUnlocksThePayingModes() throws Exception {
-        mockMvc.perform(get("/api/billing/connect").header("Authorization", "Bearer " + token))
+        mockMvc.perform(get("/api/restaurants/" + restaurantId + "/payment-account").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.connected").value(false))
                 .andExpect(jsonPath("$.chargesEnabled").value(false));
 
         completeOnboarding();
 
-        mockMvc.perform(get("/api/billing/connect").header("Authorization", "Bearer " + token))
+        mockMvc.perform(get("/api/restaurants/" + restaurantId + "/payment-account").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.connected").value(true))
                 .andExpect(jsonPath("$.chargesEnabled").value(true));
@@ -190,7 +190,7 @@ class ReservationCheckoutIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void theLedgerIsScopedToTheCallersOwnOrganization() throws Exception {
-        mockMvc.perform(get("/api/payouts").header("Authorization", "Bearer " + token))
+        mockMvc.perform(get("/api/restaurants/" + restaurantId + "/payouts").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
     }
@@ -213,12 +213,12 @@ class ReservationCheckoutIntegrationTest extends AbstractIntegrationTest {
         when(connect.createOnboardingLink(account)).thenReturn("https://connect.stripe.com/setup/1");
         when(connect.fetchStatus(account)).thenReturn(new ConnectAccountStatus(account, true, true, true));
 
-        mockMvc.perform(post("/api/billing/connect/onboarding")
+        mockMvc.perform(post("/api/restaurants/" + restaurantId + "/payment-account/onboarding")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.url").value("https://connect.stripe.com/setup/1"));
 
-        mockMvc.perform(post("/api/billing/connect/refresh")
+        mockMvc.perform(post("/api/restaurants/" + restaurantId + "/payment-account/refresh")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.chargesEnabled").value(true));

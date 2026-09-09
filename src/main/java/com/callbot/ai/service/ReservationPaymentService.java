@@ -25,14 +25,12 @@ import com.callbot.ai.model.Commission;
 import com.callbot.ai.model.Customer;
 import com.callbot.ai.model.GuaranteeMode;
 import com.callbot.ai.model.GuaranteeStatus;
-import com.callbot.ai.model.Organization;
 import com.callbot.ai.model.Reservation;
 import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.notification.ReservationCancelledByGuestEvent;
 import com.callbot.ai.notification.ReservationConfirmedEvent;
 import com.callbot.ai.repository.CustomerRepository;
-import com.callbot.ai.repository.OrganizationRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 
@@ -61,7 +59,6 @@ public class ReservationPaymentService {
 
     private final ReservationRepository reservationRepository;
     private final RestaurantRepository restaurantRepository;
-    private final OrganizationRepository organizationRepository;
     private final CustomerRepository customerRepository;
     private final StripeConnectGateway connect;
     private final ConnectAccountService connectAccount;
@@ -93,12 +90,11 @@ public class ReservationPaymentService {
         Restaurant restaurant = restaurantOf(reservation);
 
         requireAwaitingGuarantee(reservation);
-        Organization organization = organizationOf(restaurant);
-        connectAccount.requireAbleToCharge(organization.getId());
+        connectAccount.requireAbleToCharge(restaurant.getId());
 
         CheckoutSession session = GuaranteeMode.NO_SHOW.code().equals(reservation.getGuaranteeMode())
-                ? registerCard(reservation, restaurant, organization)
-                : collectBookingFee(reservation, restaurant, organization);
+                ? registerCard(reservation, restaurant)
+                : collectBookingFee(reservation, restaurant);
 
         reservation.setStripeSessionId(session.id());
         reservationRepository.save(reservation);
@@ -106,8 +102,7 @@ public class ReservationPaymentService {
         return new PaymentRedirectResponse(session.url());
     }
 
-    private CheckoutSession collectBookingFee(Reservation reservation, Restaurant restaurant,
-            Organization organization) {
+    private CheckoutSession collectBookingFee(Reservation reservation, Restaurant restaurant) {
         int amountCents = reservation.getGuaranteeAmountCents();
         Commission commission = Commission.on(amountCents);
         reservation.setApplicationFeeCents(commission.amountCents());
@@ -121,7 +116,7 @@ public class ReservationPaymentService {
                 amountCents,
                 reservation.getCurrency(),
                 commission.amountCents(),
-                organization.getStripeAccountId(),
+                restaurant.getStripeAccountId(),
                 emailOf(reservation)));
     }
 
@@ -129,13 +124,12 @@ public class ReservationPaymentService {
      * The no-show path takes nothing: the diner registers a card and is told so plainly.
      * Alloquence charges no commission on a penalty, so no application fee is set.
      */
-    private CheckoutSession registerCard(Reservation reservation, Restaurant restaurant,
-            Organization organization) {
+    private CheckoutSession registerCard(Reservation reservation, Restaurant restaurant) {
         return connect.createCardRegistration(new CardRegistration(
                 reservation.getId(),
                 restaurant.getName(),
                 reservation.getCurrency(),
-                organization.getStripeAccountId(),
+                restaurant.getStripeAccountId(),
                 emailOf(reservation)));
     }
 
@@ -228,13 +222,10 @@ public class ReservationPaymentService {
             return;
         }
         Restaurant restaurant = restaurantOf(reservation);
-        Organization organization = organizationOf(restaurant);
-        organization.setStripeDisputeCount(organization.getStripeDisputeCount() + 1);
-        organization.setStripeLastDisputeAt(OffsetDateTime.now());
-        organizationRepository.save(organization);
-        log.warn("Dispute of {} cents on reservation {} (organization {}, {} in total)",
-                dispute.amountCents(), reservation.getId(), organization.getId(),
-                organization.getStripeDisputeCount());
+        connectAccount.recordDispute(restaurant);
+        log.warn("Dispute of {} cents on reservation {} (restaurant {}, {} in total)",
+                dispute.amountCents(), reservation.getId(), restaurant.getId(),
+                restaurant.getStripeDisputeCount());
     }
 
     /**
@@ -369,8 +360,4 @@ public class ReservationPaymentService {
                 .orElseThrow(() -> new ResourceNotFoundException("Restaurant", reservation.getRestaurantId()));
     }
 
-    private Organization organizationOf(Restaurant restaurant) {
-        return organizationRepository.findById(restaurant.getOrganizationId())
-                .orElseThrow(() -> new ResourceNotFoundException("Organization", restaurant.getOrganizationId()));
-    }
 }

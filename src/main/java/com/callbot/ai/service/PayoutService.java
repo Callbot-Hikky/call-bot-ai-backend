@@ -15,15 +15,14 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.callbot.ai.dto.PayoutResponse;
-import com.callbot.ai.exception.InvalidRequestException;
-import com.callbot.ai.model.Organization;
+import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.model.Payout;
 import com.callbot.ai.model.PayoutStatus;
 import com.callbot.ai.model.Reservation;
-import com.callbot.ai.repository.OrganizationRepository;
+import com.callbot.ai.repository.RestaurantRepository;
 import com.callbot.ai.repository.PayoutRepository;
 import com.callbot.ai.repository.ReservationRepository;
-import com.callbot.ai.security.CallerOrganizationResolver;
+import com.callbot.ai.security.OrganizationScope;
 
 import lombok.RequiredArgsConstructor;
 
@@ -51,21 +50,19 @@ public class PayoutService {
     private static final Logger log = LoggerFactory.getLogger(PayoutService.class);
 
     private final ReservationRepository reservationRepository;
-    private final OrganizationRepository organizationRepository;
+    private final RestaurantRepository restaurantRepository;
     private final PayoutRepository payoutRepository;
-    private final CallerOrganizationResolver callerOrganization;
+    private final OrganizationScope scope;
 
     @Transactional(readOnly = true)
-    public List<UUID> organizationsWithMoneyDue(OffsetDateTime now) {
-        return reservationRepository.findOrganizationsWithDuePayouts(now);
+    public List<UUID> restaurantsWithMoneyDue(OffsetDateTime now) {
+        return reservationRepository.findRestaurantsWithDuePayouts(now);
     }
 
     @Transactional(readOnly = true)
-    public List<PayoutResponse> list(String callerEmail) {
-        UUID organizationId = callerOrganization.resolve(callerEmail)
-                .orElseThrow(() -> new InvalidRequestException(
-                        "Seul un utilisateur signé peut consulter ses reversements"));
-        return payoutRepository.findByOrganizationIdOrderByCreatedAtDesc(organizationId).stream()
+    public List<PayoutResponse> list(UUID restaurantId, String callerEmail) {
+        scope.requireOwnedRestaurant(restaurantId, callerEmail);
+        return payoutRepository.findByRestaurantIdOrderByCreatedAtDesc(restaurantId).stream()
                 .map(PayoutResponse::from)
                 .toList();
     }
@@ -75,8 +72,8 @@ public class PayoutService {
      * the payout that now owns it. Committing here is what makes the claim exclusive.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public List<Payout> claim(UUID organizationId, OffsetDateTime now) {
-        List<Reservation> due = reservationRepository.lockDuePayoutsFor(organizationId, now);
+    public List<Payout> claim(UUID restaurantId, OffsetDateTime now) {
+        List<Reservation> due = reservationRepository.lockDuePayoutsFor(restaurantId, now);
         if (due.isEmpty()) {
             // Another instance took them between the two queries.
             return List.of();
@@ -97,7 +94,7 @@ public class PayoutService {
                 continue;
             }
             Payout payout = payoutRepository.save(Payout.builder()
-                    .organizationId(organizationId)
+                    .restaurantId(restaurantId)
                     .amountCents(amountCents)
                     .currency(entry.getKey())
                     .reservationCount(reservations.size())
@@ -143,12 +140,12 @@ public class PayoutService {
         reservationRepository.saveAll(reservations);
     }
 
-    /** The organization, only if Stripe will actually accept a transfer to it. */
+    /** The restaurant, only if Stripe will actually accept a transfer to its account. */
     @Transactional(readOnly = true)
-    public Optional<Organization> payableOrganization(UUID organizationId) {
-        return organizationRepository.findById(organizationId)
-                .filter(organization -> organization.getStripeAccountId() != null
-                        && organization.isStripePayoutsEnabled());
+    public Optional<Restaurant> payableRestaurant(UUID restaurantId) {
+        return restaurantRepository.findById(restaurantId)
+                .filter(restaurant -> restaurant.getStripeAccountId() != null
+                        && restaurant.isStripePayoutsEnabled());
     }
 
     /** The restaurateur receives the fee less Alloquence's commission, as Stripe already split it. */

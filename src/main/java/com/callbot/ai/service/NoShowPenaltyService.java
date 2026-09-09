@@ -15,13 +15,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.callbot.ai.gateway.stripe.NoShowCharge;
 import com.callbot.ai.model.GuaranteeStatus;
-import com.callbot.ai.model.Organization;
 import com.callbot.ai.model.Reservation;
 import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.notification.ReservationPenaltyAbandonedEvent;
 import com.callbot.ai.notification.ReservationPenaltyChargedEvent;
-import com.callbot.ai.repository.OrganizationRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 
@@ -55,7 +53,6 @@ public class NoShowPenaltyService {
 
     private final ReservationRepository reservationRepository;
     private final RestaurantRepository restaurantRepository;
-    private final OrganizationRepository organizationRepository;
     private final ApplicationEventPublisher events;
 
     /**
@@ -80,9 +77,7 @@ public class NoShowPenaltyService {
     @Transactional(readOnly = true)
     public Optional<String> connectedAccountFor(Reservation reservation) {
         return restaurantRepository.findById(reservation.getRestaurantId())
-                .map(Restaurant::getOrganizationId)
-                .flatMap(organizationRepository::findById)
-                .map(Organization::getStripeAccountId);
+                .map(Restaurant::getStripeAccountId);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
