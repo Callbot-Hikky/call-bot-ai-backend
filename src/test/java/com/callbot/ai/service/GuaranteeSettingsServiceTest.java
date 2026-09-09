@@ -3,6 +3,7 @@ package com.callbot.ai.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -31,6 +32,8 @@ class GuaranteeSettingsServiceTest {
     private RestaurantRepository restaurantRepository;
     @Mock
     private CallerOrganizationResolver callerOrganization;
+    @Mock
+    private ConnectAccountService connectAccount;
     @InjectMocks
     private GuaranteeSettingsService service;
 
@@ -48,6 +51,29 @@ class GuaranteeSettingsServiceTest {
         when(callerOrganization.resolve(OWNER)).thenReturn(Optional.of(organizationId));
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
         when(restaurantRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+    }
+
+    @Test
+    void refusesAPayingModeWhileStripeHasNotClearedTheAccount() {
+        when(callerOrganization.resolve(OWNER)).thenReturn(Optional.of(organizationId));
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
+        doThrow(new InvalidRequestException("compte non validé"))
+                .when(connectAccount).requireAbleToCharge(organizationId);
+
+        assertThatThrownBy(() -> service.update(restaurantId,
+                new GuaranteeSettingsRequest("booking_fee", 1500, null, 24), OWNER))
+                .isInstanceOf(InvalidRequestException.class);
+
+        verify(restaurantRepository, never()).save(any());
+    }
+
+    @Test
+    void staysFreeWithoutAskingStripeAnything() {
+        callerIsOwner();
+
+        service.update(restaurantId, new GuaranteeSettingsRequest("none", null, null, null), OWNER);
+
+        verify(connectAccount, never()).requireAbleToCharge(any());
     }
 
     @Test

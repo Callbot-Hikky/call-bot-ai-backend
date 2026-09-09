@@ -32,6 +32,7 @@ public class GuaranteeSettingsService {
 
     private final RestaurantRepository restaurantRepository;
     private final CallerOrganizationResolver callerOrganization;
+    private final ConnectAccountService connectAccount;
 
     @Transactional(readOnly = true)
     public GuaranteeSettingsResponse get(UUID restaurantId, String callerEmail) {
@@ -44,6 +45,9 @@ public class GuaranteeSettingsService {
         GuaranteeMode mode = parseMode(request.mode());
 
         requireAmountFor(mode, request);
+        if (mode.requiresGuarantee()) {
+            connectAccount.requireAbleToCharge(restaurant.getOrganizationId());
+        }
 
         restaurant.setGuaranteeMode(mode.code());
         restaurant.setBookingFeeCentsPerGuest(request.bookingFeeCentsPerGuest());

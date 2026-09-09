@@ -1,5 +1,7 @@
 package com.callbot.ai.integration;
 
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -13,8 +15,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.callbot.ai.gateway.stripe.ConnectAccountStatus;
+import com.callbot.ai.gateway.stripe.StripeConnectGateway;
 import com.callbot.ai.support.AbstractIntegrationTest;
 import com.jayway.jsonpath.JsonPath;
 
@@ -23,6 +28,8 @@ class PaidReservationIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+    @MockitoBean
+    private StripeConnectGateway connect;
 
     private String token;
     private String restaurantId;
@@ -42,6 +49,7 @@ class PaidReservationIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         restaurantId = JsonPath.read(restaurant, "$.id");
+        completeOnboarding("acct_" + suffix);
     }
 
     @Test
@@ -171,6 +179,23 @@ class PaidReservationIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.mode").value("booking_fee"))
                 .andExpect(jsonPath("$.bookingFeeCentsPerGuest").value(2000))
                 .andExpect(jsonPath("$.refundWindowHours").value(72));
+    }
+
+    /**
+     * A paying mode is unavailable until Stripe has cleared the account, so every test
+     * that sets one must go through onboarding first — as a real restaurateur does.
+     */
+    private void completeOnboarding(String account) throws Exception {
+        when(connect.createConnectedAccount(anyString(), anyString())).thenReturn(account);
+        when(connect.createOnboardingLink(account)).thenReturn("https://connect.stripe.com/setup/1");
+        when(connect.fetchStatus(account)).thenReturn(new ConnectAccountStatus(account, true, true, true));
+
+        mockMvc.perform(post("/api/billing/connect/onboarding")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/billing/connect/refresh")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
     }
 
     private void setGuaranteeMode(String body) throws Exception {

@@ -104,6 +104,42 @@ public class Reservation {
     @Column(name = "cancelled_at")
     private OffsetDateTime cancelledAt;
 
+    /**
+     * Refund window promised to this diner, in hours, frozen like the mode and the
+     * amount. Shortening the restaurant setting must not retract a promise already made.
+     */
+    @Column(name = "guarantee_refund_window_hours")
+    private Integer guaranteeRefundWindowHours;
+
+    @Column(name = "stripe_session_id")
+    private String stripeSessionId;
+
+    @Column(name = "stripe_payment_intent_id")
+    private String stripePaymentIntentId;
+
+    /** Alloquence's commission on this booking fee, in cents. Zero on no-show penalties. */
+    @Column(name = "application_fee_cents")
+    private Integer applicationFeeCents;
+
+    @Column(name = "paid_at")
+    private OffsetDateTime paidAt;
+
+    @Column(name = "refunded_at")
+    private OffsetDateTime refundedAt;
+
+    @Column(name = "refunded_amount_cents")
+    private Integer refundedAmountCents;
+
+    /** When this money may leave for the restaurateur's bank: a day after the service. */
+    @Column(name = "payout_eligible_at")
+    private OffsetDateTime payoutEligibleAt;
+
+    @Column(name = "paid_out_at")
+    private OffsetDateTime paidOutAt;
+
+    @Column(name = "payout_id")
+    private UUID payoutId;
+
     @PrePersist
     void onCreate() {
         OffsetDateTime now = OffsetDateTime.now();

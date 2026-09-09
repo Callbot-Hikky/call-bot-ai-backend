@@ -47,6 +47,9 @@ public class GuaranteePolicy {
         }
 
         reservation.setGuaranteeAmountCents(amountFor(mode, restaurant, reservation.getPartySize()));
+        // Frozen alongside the amount: the window is half of what was promised to the
+        // diner, and a restaurateur shortening it must not shorten it for them.
+        reservation.setGuaranteeRefundWindowHours(restaurant.getRefundWindowHours());
 
         if (exemptedBy != null) {
             reservation.setGuaranteeStatus(GuaranteeStatus.EXEMPTED);
