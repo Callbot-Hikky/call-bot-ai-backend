@@ -31,13 +31,9 @@ public record Commission(int amountCents) {
         if (grossCents <= 0) {
             return none();
         }
-        // Integer arithmetic, rounded half up: money never goes through a double.
-        int percentPart = (grossCents * PERCENT + 50) / 100;
-        return new Commission(Math.min(grossCents, percentPart + FIXED_CENTS));
-    }
-
-    /** What is left for the restaurateur. */
-    public int netOf(int grossCents) {
-        return grossCents - amountCents;
+        // Integer arithmetic, rounded half up: money never goes through a double. Widened
+        // to long first — the multiplication overflows an int above about 4,3 M€.
+        long percentPart = ((long) grossCents * PERCENT + 50) / 100;
+        return new Commission((int) Math.min(grossCents, percentPart + FIXED_CENTS));
     }
 }

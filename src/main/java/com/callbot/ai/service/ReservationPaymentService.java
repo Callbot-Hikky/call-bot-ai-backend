@@ -82,8 +82,9 @@ public class ReservationPaymentService {
      *
      * <p>A fresh Stripe session is created on every call rather than reusing a stored
      * one: a diner who left the page and came back would otherwise land on a session
-     * Stripe may already have expired. Reconciliation keys off the reservation id
-     * carried in the metadata, so an abandoned session is simply never completed.
+     * Stripe may already have expired. The previous session is expired first — two live
+     * sessions for one reservation would both be payable, and the second payment would
+     * have to be handed back by hand.
      */
     public PaymentRedirectResponse startCheckout(String paymentToken) {
         Reservation reservation = byPaymentToken(paymentToken);
@@ -92,6 +93,9 @@ public class ReservationPaymentService {
         requirePayable(reservation);
         Organization organization = organizationOf(restaurant);
         connectAccount.requireAbleToCharge(organization.getId());
+
+        // Only one session may be payable at a time.
+        connect.expireCheckout(reservation.getStripeSessionId());
 
         int amountCents = reservation.getGuaranteeAmountCents();
         Commission commission = Commission.on(amountCents);
@@ -126,6 +130,7 @@ public class ReservationPaymentService {
             return;
         }
         if (GuaranteeStatus.SECURED.equals(reservation.getGuaranteeStatus())) {
+            refundDuplicate(reservation, paid);
             return;
         }
         if (ReservationStatus.CANCELLED.equals(reservation.getStatus())) {
@@ -151,6 +156,47 @@ public class ReservationPaymentService {
     }
 
     /**
+     * Records a bank dispute against the organization whose fee was contested.
+     *
+     * <p>Alloquence absorbs the loss, so nothing is claimed back from the restaurateur
+     * here. What is kept is the count: an establishment whose diners routinely contest
+     * their fees is a risk worth seeing coming rather than discovering on a statement.
+     */
+    public void recordDispute(ConnectWebhookEvent.DisputeOpened dispute) {
+        Reservation reservation = reservationRepository
+                .findByStripePaymentIntentId(dispute.paymentIntentId()).orElse(null);
+        if (reservation == null) {
+            log.warn("Dispute on payment {} matches no reservation", dispute.paymentIntentId());
+            return;
+        }
+        Restaurant restaurant = restaurantOf(reservation);
+        Organization organization = organizationOf(restaurant);
+        organization.setStripeDisputeCount(organization.getStripeDisputeCount() + 1);
+        organization.setStripeLastDisputeAt(OffsetDateTime.now());
+        organizationRepository.save(organization);
+        log.warn("Dispute of {} cents on reservation {} (organization {}, {} in total)",
+                dispute.amountCents(), reservation.getId(), organization.getId(),
+                organization.getStripeDisputeCount());
+    }
+
+    /**
+     * A payment for a reservation already paid for.
+     *
+     * <p>Normally Stripe simply redelivering the same event, which is nothing. But if it
+     * carries a different payment intent, the diner genuinely paid twice — two checkout
+     * sessions were open at once — and the second one goes straight back.
+     */
+    private void refundDuplicate(Reservation reservation, ConnectWebhookEvent.ReservationPaid paid) {
+        String alreadyPaid = reservation.getStripePaymentIntentId();
+        if (paid.paymentIntentId() == null || paid.paymentIntentId().equals(alreadyPaid)) {
+            return;
+        }
+        log.error("Reservation {} was paid twice ({} and {}); refunding the second payment",
+                reservation.getId(), alreadyPaid, paid.paymentIntentId());
+        connect.refundFully(paid.paymentIntentId(), "duplicate-" + paid.paymentIntentId());
+    }
+
+    /**
      * Cancels on the diner's own initiative, refunding when they are still inside the
      * window they were promised.
      *
@@ -164,10 +210,13 @@ public class ReservationPaymentService {
             return new CancellationResponse(true, reservation.getRefundedAt() != null,
                     reservation.getRefundedAmountCents());
         }
+        requireStillCancellable(reservation);
 
         boolean refundable = isRefundable(reservation);
         if (refundable) {
-            connect.refundFully(reservation.getStripePaymentIntentId());
+            // Keyed on the reservation: a retry cannot refund the same fee twice.
+            connect.refundFully(reservation.getStripePaymentIntentId(),
+                    "refund-" + reservation.getId());
             reservation.setGuaranteeStatus(GuaranteeStatus.REFUNDED);
             reservation.setRefundedAt(OffsetDateTime.now());
             reservation.setRefundedAmountCents(reservation.getGuaranteeAmountCents());
@@ -182,6 +231,21 @@ public class ReservationPaymentService {
         events.publishEvent(new ReservationCancelledByGuestEvent(reservation.getId(), refundable));
 
         return new CancellationResponse(true, refundable, reservation.getRefundedAmountCents());
+    }
+
+    /**
+     * The cancellation link is valid until the service, and no further.
+     *
+     * <p>Afterwards the table was either used or wasted, and flipping the reservation to
+     * cancelled would rewrite what happened in the dining room — freeing a table on the
+     * floor plan that was in fact occupied, on the strength of a message anyone may
+     * still have.
+     */
+    private void requireStillCancellable(Reservation reservation) {
+        if (reservation.getStartsAt().isBefore(OffsetDateTime.now())) {
+            throw new InvalidRequestException(
+                    "Le service a déjà eu lieu : ce lien n'est plus valable");
+        }
     }
 
     /**

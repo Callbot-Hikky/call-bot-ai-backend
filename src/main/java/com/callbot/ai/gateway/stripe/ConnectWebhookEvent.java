@@ -22,4 +22,13 @@ public sealed interface ConnectWebhookEvent {
      */
     record AccountUpdated(ConnectAccountStatus status) implements ConnectWebhookEvent {
     }
+
+    /**
+     * A diner disputed their booking fee with their bank.
+     *
+     * <p>Carries the payment intent rather than a reservation id: a dispute object has no
+     * metadata of ours, so the reservation is found from what was charged.
+     */
+    record DisputeOpened(String paymentIntentId, int amountCents) implements ConnectWebhookEvent {
+    }
 }

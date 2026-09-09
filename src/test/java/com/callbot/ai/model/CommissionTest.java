@@ -30,10 +30,8 @@ class CommissionTest {
     }
 
     @Test
-    void leavesTheRestToTheRestaurateur() {
-        Commission commission = Commission.on(9000);
-
-        assertThat(commission.amountCents()).isEqualTo(500);
-        assertThat(commission.netOf(9000)).isEqualTo(8500);
+    void onALargeFeeTheArithmeticStaysExact() {
+        // 50 000 € : the percentage overflows an int if computed without widening.
+        assertThat(Commission.on(5_000_000).amountCents()).isEqualTo(250_000 + 50);
     }
 }

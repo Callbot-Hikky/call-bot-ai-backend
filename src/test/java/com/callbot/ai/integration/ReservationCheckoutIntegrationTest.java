@@ -154,7 +154,7 @@ class ReservationCheckoutIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.refunded").value(true))
                 .andExpect(jsonPath("$.refundedAmountCents").value(3000));
 
-        verify(connect).refundFully(anyString());
+        verify(connect).refundFully(anyString(), anyString());
         assertThat(reservation(reservationId).getGuaranteeStatus()).isEqualTo("refunded");
     }
 
@@ -176,7 +176,7 @@ class ReservationCheckoutIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.cancelled").value(true))
                 .andExpect(jsonPath("$.refunded").value(false));
 
-        verify(connect, never()).refundFully(anyString());
+        verify(connect, never()).refundFully(anyString(), anyString());
         assertThat(reservation(reservationId).getGuaranteeStatus()).isEqualTo("secured");
     }
 

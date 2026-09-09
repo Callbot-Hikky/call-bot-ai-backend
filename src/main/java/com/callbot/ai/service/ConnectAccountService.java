@@ -17,6 +17,7 @@ import com.callbot.ai.gateway.stripe.StripeConnectGateway;
 import com.callbot.ai.model.Organization;
 import com.callbot.ai.model.User;
 import com.callbot.ai.repository.OrganizationRepository;
+import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.UserRepository;
 import com.callbot.ai.security.CallerOrganizationResolver;
 
@@ -39,11 +40,12 @@ public class ConnectAccountService {
     private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
     private final CallerOrganizationResolver callerOrganization;
+    private final ReservationRepository reservationRepository;
     private final StripeConnectGateway connect;
 
     @Transactional(readOnly = true)
     public ConnectAccountResponse status(String callerEmail) {
-        return ConnectAccountResponse.from(callerOrganizationOrFail(callerEmail));
+        return describe(callerOrganizationOrFail(callerEmail));
     }
 
     /**
@@ -80,10 +82,10 @@ public class ConnectAccountService {
     public ConnectAccountResponse refresh(String callerEmail) {
         Organization organization = callerOrganizationOrFail(callerEmail);
         if (organization.getStripeAccountId() == null) {
-            return ConnectAccountResponse.from(organization);
+            return describe(organization);
         }
         save(organization, connect.fetchStatus(organization.getStripeAccountId()));
-        return ConnectAccountResponse.from(organization);
+        return describe(organization);
     }
 
     /**
@@ -110,6 +112,12 @@ public class ConnectAccountService {
             organization.setStripeOnboardedAt(OffsetDateTime.now());
         }
         organizationRepository.save(organization);
+    }
+
+    /** The dispute count is only meaningful next to how many fees were actually taken. */
+    private ConnectAccountResponse describe(Organization organization) {
+        return ConnectAccountResponse.from(organization,
+                reservationRepository.countPaidFor(organization.getId()));
     }
 
     private Organization callerOrganizationOrFail(String callerEmail) {

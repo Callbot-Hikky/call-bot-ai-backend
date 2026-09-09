@@ -165,12 +165,15 @@ class ReservationPaymentServiceTest {
     void aWebhookDeliveredTwiceConfirmsOnlyOnce() {
         Reservation reservation = awaitingPayment();
         reservation.setGuaranteeStatus(GuaranteeStatus.SECURED);
+        reservation.setStripePaymentIntentId("pi_1");
         when(reservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
 
+        // Same payment intent: Stripe redelivering, not a second payment.
         service.markPaid(new ConnectWebhookEvent.ReservationPaid(reservationId, "cs_1", "pi_1", 9000));
 
         verify(events, never()).publishEvent(any(ReservationConfirmedEvent.class));
         verify(reservationRepository, never()).save(any());
+        verify(connect, never()).refundFully(anyString(), anyString());
     }
 
     @Test
@@ -198,7 +201,7 @@ class ReservationPaymentServiceTest {
         assertThat(response.refundedAmountCents()).isEqualTo(9000);
         assertThat(reservation.getGuaranteeStatus()).isEqualTo(GuaranteeStatus.REFUNDED);
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
-        verify(connect).refundFully("pi_1");
+        verify(connect).refundFully("pi_1", "refund-" + reservationId);
         verify(events).publishEvent(new ReservationCancelledByGuestEvent(reservationId, true));
     }
 
@@ -213,7 +216,7 @@ class ReservationPaymentServiceTest {
         assertThat(response.cancelled()).isTrue();
         assertThat(response.refunded()).isFalse();
         assertThat(reservation.getGuaranteeStatus()).isEqualTo(GuaranteeStatus.SECURED);
-        verify(connect, never()).refundFully(anyString());
+        verify(connect, never()).refundFully(anyString(), anyString());
         verify(events).publishEvent(new ReservationCancelledByGuestEvent(reservationId, false));
     }
 
@@ -230,6 +233,52 @@ class ReservationPaymentServiceTest {
     }
 
     @Test
+    void aSecondSessionCannotBeOpenedWithoutClosingTheFirst() {
+        Reservation reservation = awaitingPayment();
+        reservation.setStripeSessionId("cs_old");
+        when(reservationRepository.findByPaymentToken(PAYMENT_TOKEN)).thenReturn(Optional.of(reservation));
+        restaurantAndOrganizationExist();
+        when(connect.createBookingFeeCheckout(any()))
+                .thenReturn(new CheckoutSession("cs_new", "https://checkout.stripe.com/cs_new"));
+
+        service.startCheckout(PAYMENT_TOKEN);
+
+        // Two payable sessions would mean two possible payments for one table.
+        verify(connect).expireCheckout("cs_old");
+        assertThat(reservation.getStripeSessionId()).isEqualTo("cs_new");
+    }
+
+    @Test
+    void aGenuineSecondPaymentIsGivenBackRatherThanSilentlyKept() {
+        Reservation reservation = awaitingPayment();
+        reservation.setGuaranteeStatus(GuaranteeStatus.SECURED);
+        reservation.setStripePaymentIntentId("pi_first");
+        when(reservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
+
+        service.markPaid(new ConnectWebhookEvent.ReservationPaid(reservationId, "cs_2", "pi_second", 9000));
+
+        verify(connect).refundFully("pi_second", "duplicate-pi_second");
+        assertThat(reservation.getStripePaymentIntentId()).isEqualTo("pi_first");
+    }
+
+    @Test
+    void theCancellationLinkStopsWorkingOnceTheServiceHasHappened() {
+        Reservation reservation = paidReservationStartingIn(72);
+        reservation.setStartsAt(OffsetDateTime.now().minusHours(2));
+        reservation.setEndsAt(OffsetDateTime.now());
+        when(reservationRepository.findByCancellationToken(CANCELLATION_TOKEN))
+                .thenReturn(Optional.of(reservation));
+
+        assertThatThrownBy(() -> service.cancelByToken(CANCELLATION_TOKEN))
+                .isInstanceOf(InvalidRequestException.class)
+                .hasMessageContaining("service");
+
+        // Nothing is rewritten about a table that was in fact used.
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+        verify(connect, never()).refundFully(anyString(), anyString());
+    }
+
+    @Test
     void cancellingTwiceDoesNotRefundTwice() {
         Reservation reservation = paidReservationStartingIn(72);
         reservation.setStatus(ReservationStatus.CANCELLED);
@@ -241,7 +290,7 @@ class ReservationPaymentServiceTest {
         CancellationResponse response = service.cancelByToken(CANCELLATION_TOKEN);
 
         assertThat(response.refunded()).isTrue();
-        verify(connect, never()).refundFully(anyString());
+        verify(connect, never()).refundFully(anyString(), anyString());
         verify(events, never()).publishEvent(any(ReservationCancelledByGuestEvent.class));
     }
 
