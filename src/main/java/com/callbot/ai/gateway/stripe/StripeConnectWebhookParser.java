@@ -13,6 +13,7 @@ import com.callbot.ai.exception.InvalidPaymentSignatureException;
 import com.callbot.ai.exception.PaymentGatewayException;
 import com.stripe.exception.SignatureVerificationException;
 import com.stripe.model.Account;
+import com.stripe.model.Dispute;
 import com.stripe.model.Event;
 import com.stripe.model.checkout.Session;
 import com.stripe.net.Webhook;
@@ -35,6 +36,7 @@ public class StripeConnectWebhookParser {
     private static final String SIGNATURE_HEADER = "stripe-signature";
     private static final String CHECKOUT_COMPLETED = "checkout.session.completed";
     private static final String ACCOUNT_UPDATED = "account.updated";
+    private static final String DISPUTE_CREATED = "charge.dispute.created";
 
     private final StripeConnectProperties properties;
 
@@ -59,6 +61,7 @@ public class StripeConnectWebhookParser {
         return switch (event.getType()) {
             case CHECKOUT_COMPLETED -> reservationPaid(event);
             case ACCOUNT_UPDATED -> accountUpdated(event);
+            case DISPUTE_CREATED -> disputeOpened(event);
             default -> Optional.empty();
         };
     }
@@ -91,6 +94,16 @@ public class StripeConnectWebhookParser {
             log.warn("Stripe session {} carries an unreadable reservation id: {}", session.getId(), raw);
             return Optional.empty();
         }
+    }
+
+    private Optional<ConnectWebhookEvent> disputeOpened(Event event) {
+        return event.getDataObjectDeserializer().getObject()
+                .filter(Dispute.class::isInstance)
+                .map(Dispute.class::cast)
+                .filter(dispute -> dispute.getPaymentIntent() != null)
+                .map(dispute -> new ConnectWebhookEvent.DisputeOpened(
+                        dispute.getPaymentIntent(),
+                        dispute.getAmount() == null ? 0 : dispute.getAmount().intValue()));
     }
 
     private Optional<ConnectWebhookEvent> accountUpdated(Event event) {

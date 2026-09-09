@@ -10,13 +10,17 @@ public record ConnectAccountResponse(
         boolean connected,
         boolean chargesEnabled,
         boolean payoutsEnabled,
-        boolean detailsSubmitted) {
+        boolean detailsSubmitted,
+        int disputeCount,
+        long paidReservationCount) {
 
-    public static ConnectAccountResponse from(Organization organization) {
+    public static ConnectAccountResponse from(Organization organization, long paidReservationCount) {
         return new ConnectAccountResponse(
                 organization.getStripeAccountId() != null,
                 organization.isStripeChargesEnabled(),
                 organization.isStripePayoutsEnabled(),
-                organization.isStripeDetailsSubmitted());
+                organization.isStripeDetailsSubmitted(),
+                organization.getStripeDisputeCount(),
+                paidReservationCount);
     }
 }

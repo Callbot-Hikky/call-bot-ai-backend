@@ -53,6 +53,14 @@ public class Organization {
     @Column(name = "stripe_onboarded_at")
     private OffsetDateTime stripeOnboardedAt;
 
+    /** Bank disputes on this organization's booking fees, absorbed by Alloquence. */
+    @Builder.Default
+    @Column(name = "stripe_dispute_count", nullable = false)
+    private int stripeDisputeCount = 0;
+
+    @Column(name = "stripe_last_dispute_at")
+    private OffsetDateTime stripeLastDisputeAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 

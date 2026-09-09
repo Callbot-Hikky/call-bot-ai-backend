@@ -1,5 +1,9 @@
 package com.callbot.ai.gateway.stripe;
 
+import java.util.Set;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import com.callbot.ai.exception.PaymentGatewayException;
@@ -35,8 +39,13 @@ import com.stripe.param.checkout.SessionCreateParams;
 @Component
 public class StripeConnectGateway {
 
+    private static final Logger log = LoggerFactory.getLogger(StripeConnectGateway.class);
+
     /** Ties a Stripe object back to the reservation it paid for. */
     public static final String RESERVATION_METADATA_KEY = "reservationId";
+
+    /** Refund states that mean no money moved. "pending" and "succeeded" both did. */
+    private static final Set<String> REFUND_FAILED = Set.of("failed", "canceled");
 
     private final StripeProperties stripe;
     private final StripeConnectProperties connect;
@@ -159,11 +168,36 @@ public class StripeConnectGateway {
     }
 
     /**
+     * Closes a checkout session so it can no longer be paid.
+     *
+     * <p>Called before opening a replacement: two live sessions for one reservation
+     * would both be payable, and the second payment would have to be given back by hand.
+     *
+     * <p>Best effort — a session Stripe has already completed or expired cannot be
+     * expired again, and that is not a problem worth failing the diner's click over.
+     */
+    public void expireCheckout(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        requireKey();
+        try {
+            client.checkout().sessions().expire(sessionId);
+        } catch (StripeException e) {
+            log.info("Could not expire checkout session {} ({}); it was most likely already closed",
+                    sessionId, e.getMessage());
+        }
+    }
+
+    /**
      * Gives the diner every cent back. The transfer to the restaurant is reversed and
      * Alloquence hands back its commission: a cancellation inside the promised window
      * costs the diner nothing, so it must not quietly cost them the platform's cut.
+     *
+     * @param idempotencyKey makes a retry after a lost response a no-op at Stripe rather
+     *                       than a second refund
      */
-    public void refundFully(String paymentIntentId) {
+    public void refundFully(String paymentIntentId, String idempotencyKey) {
         requireKey();
         RefundCreateParams params = RefundCreateParams.builder()
                 .setPaymentIntent(paymentIntentId)
@@ -171,29 +205,47 @@ public class StripeConnectGateway {
                 .setRefundApplicationFee(true)
                 .build();
         try {
-            Refund refund = client.refunds().create(params);
-            if (refund.getId() == null) {
-                throw new PaymentGatewayException("Stripe refused the refund of " + paymentIntentId);
+            Refund refund = client.refunds().create(params, options(null, idempotencyKey));
+            // Stripe always returns an id, so the id proves nothing: the status does.
+            // "pending" is a normal outcome on some payment methods and counts as success.
+            if (REFUND_FAILED.contains(refund.getStatus())) {
+                throw new PaymentGatewayException(
+                        "Stripe refused the refund of " + paymentIntentId + ": " + refund.getStatus());
             }
         } catch (StripeException e) {
             throw new PaymentGatewayException("Unable to refund the booking fee", e);
         }
     }
 
-    /** Sends a connected account's collected fees to its bank. */
-    public String payOut(String accountId, int amountCents, String currency) {
+    /**
+     * Sends a connected account's collected fees to its bank.
+     *
+     * @param idempotencyKey the payout record's own id, so a sweep that retries after
+     *                       losing Stripe's answer cannot send the money twice
+     */
+    public String payOut(String accountId, int amountCents, String currency, String idempotencyKey) {
         requireKey();
         PayoutCreateParams params = PayoutCreateParams.builder()
                 .setAmount((long) amountCents)
                 .setCurrency(currency)
                 .build();
-        RequestOptions options = RequestOptions.builder().setStripeAccount(accountId).build();
         try {
-            Payout payout = client.payouts().create(params, options);
+            Payout payout = client.payouts().create(params, options(accountId, idempotencyKey));
             return payout.getId();
         } catch (StripeException e) {
             throw new PaymentGatewayException("Unable to pay out to the connected account", e);
         }
+    }
+
+    private static RequestOptions options(String stripeAccount, String idempotencyKey) {
+        RequestOptions.RequestOptionsBuilder builder = RequestOptions.builder();
+        if (stripeAccount != null) {
+            builder.setStripeAccount(stripeAccount);
+        }
+        if (idempotencyKey != null) {
+            builder.setIdempotencyKey(idempotencyKey);
+        }
+        return builder.build();
     }
 
     private void requireKey() {

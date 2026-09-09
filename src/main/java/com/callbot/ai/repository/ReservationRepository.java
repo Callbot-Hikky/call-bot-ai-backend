@@ -69,6 +69,21 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
     List<Reservation> lockDuePayoutsFor(@Param("organizationId") UUID organizationId,
             @Param("now") OffsetDateTime now);
 
+    /** The reservations a payout claimed, so a refused transfer can release them. */
+    List<Reservation> findByPayoutId(UUID payoutId);
+
+    /** The reservation a bank dispute refers to; a dispute carries no metadata of ours. */
+    Optional<Reservation> findByStripePaymentIntentId(String stripePaymentIntentId);
+
+    /** Denominator of an organization's dispute rate. */
+    @Query("""
+            SELECT COUNT(r) FROM Reservation r, Restaurant s
+            WHERE r.restaurantId = s.id
+              AND s.organizationId = :organizationId
+              AND r.paidAt IS NOT NULL
+            """)
+    long countPaidFor(@Param("organizationId") UUID organizationId);
+
     Optional<Reservation> findByPaymentToken(String paymentToken);
 
     Optional<Reservation> findByCancellationToken(String cancellationToken);

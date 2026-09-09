@@ -23,6 +23,7 @@ public class ConnectWebhookHandler {
         switch (event) {
             case ConnectWebhookEvent.ReservationPaid paid -> payments.markPaid(paid);
             case ConnectWebhookEvent.AccountUpdated updated -> accounts.apply(updated.status());
+            case ConnectWebhookEvent.DisputeOpened dispute -> payments.recordDispute(dispute);
         }
     }
 }
