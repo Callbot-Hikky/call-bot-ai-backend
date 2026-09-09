@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import com.callbot.ai.exception.PartySizeChangeRejectedException;
 import com.callbot.ai.model.GuaranteeMode;
+import com.callbot.ai.model.GuaranteeStatus;
 import com.callbot.ai.model.Reservation;
 import com.callbot.ai.model.RestaurantTable;
 import com.callbot.ai.repository.ReservationRepository;
@@ -32,8 +33,10 @@ import lombok.RequiredArgsConstructor;
  * is per guest and only ever taken on an absence, so its basis simply follows the covers.
  *
  * <p><strong>Up, mode {@code booking_fee}</strong> — turned down for now with
- * {@code top_up_required}. The fee was collected per guest, so the extra guests are owed;
- * collecting that top-up is its own piece of work.
+ * {@code top_up_required} when a fee is actually riding on the reservation. The fee was
+ * priced per guest, so the extra guests are owed; collecting that top-up is its own piece
+ * of work. A fee staff waived, refunded, or never asked for leaves nothing to top up, and
+ * the rise goes through like any other.
  *
  * <p>The table check is a finding, not a booking: nothing is held or pre-reserved for the
  * reservation, and the reservation is not moved onto the table that made the change pass.
@@ -65,11 +68,31 @@ public class PartySizeChangePolicy {
 
         requireSeatableTable(reservation, newPartySize, startsAt, endsAt);
 
-        if (GuaranteeMode.fromCode(reservation.getGuaranteeMode()) == GuaranteeMode.BOOKING_FEE) {
+        if (GuaranteeMode.fromCode(reservation.getGuaranteeMode()) == GuaranteeMode.BOOKING_FEE
+                && owesABookingFee(reservation)) {
             throw new PartySizeChangeRejectedException(
                     PartySizeChangeRejectedException.TOP_UP_REQUIRED,
-                    "The booking fee was paid per guest: the extra guests have to be paid for first");
+                    "The booking fee was priced per guest: the extra guests have to be paid for first");
         }
+    }
+
+    /**
+     * Whether this reservation actually carries a booking fee that the extra guests would
+     * have to be topped up against.
+     *
+     * <p>The rule follows the money, not the restaurant's setting. A fee staff waived was
+     * never collected, so there is nothing to top up and claiming otherwise would leave the
+     * party stuck behind a payment of zero. Same for a fee already handed back, or one the
+     * restaurant never asked for on this reservation.
+     *
+     * <p>A fee still {@link GuaranteeStatus#AWAITING awaiting} payment does count: the
+     * amount was frozen when the link was sent, so letting the party grow underneath it
+     * would quietly undercharge the table.
+     */
+    private boolean owesABookingFee(Reservation reservation) {
+        String status = reservation.getGuaranteeStatus();
+
+        return GuaranteeStatus.AWAITING.equals(status) || GuaranteeStatus.SECURED.equals(status);
     }
 
     /**
