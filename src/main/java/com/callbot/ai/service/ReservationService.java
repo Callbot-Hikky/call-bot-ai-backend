@@ -38,7 +38,7 @@ import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantHoursRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 import com.callbot.ai.repository.RestaurantTableRepository;
-import com.callbot.ai.security.CallerOrganizationResolver;
+import com.callbot.ai.security.OrganizationScope;
 
 import lombok.RequiredArgsConstructor;
 
@@ -56,12 +56,11 @@ public class ReservationService {
     private final CustomerRepository customerRepository;
     private final RestaurantHoursRepository hoursRepository;
     private final ApplicationEventPublisher events;
-    private final CallerOrganizationResolver callerOrganization;
+    private final OrganizationScope scope;
     private final GuaranteePolicy guaranteePolicy;
 
     public ReservationResponse create(ReservationRequest request, String callerEmail) {
-        Restaurant restaurant = requireRestaurantAccess(
-                request.restaurantId(), callerOrganization.resolve(callerEmail));
+        Restaurant restaurant = scope.ownedRestaurant(request.restaurantId(), callerEmail);
         Reservation reservation = Reservation.builder()
                 .restaurantId(request.restaurantId())
                 .customerId(request.customerId())
@@ -83,21 +82,19 @@ public class ReservationService {
 
     @Transactional(readOnly = true)
     public List<ReservationResponse> list(UUID restaurantId, Set<String> expand, String callerEmail) {
-        Optional<UUID> callerOrganizationId = callerOrganization.resolve(callerEmail);
         List<Reservation> reservations;
         if (restaurantId != null) {
-            requireRestaurantAccess(restaurantId, callerOrganizationId);
+            scope.requireOwnedRestaurant(restaurantId, callerEmail);
             reservations = reservationRepository.findByRestaurantId(restaurantId);
-        } else if (callerOrganizationId.isEmpty()) {
-            reservations = reservationRepository.findAll();
         } else {
-            List<UUID> restaurantIds = restaurantRepository.findByOrganizationId(callerOrganizationId.get())
-                    .stream()
-                    .map(Restaurant::getId)
-                    .toList();
-            reservations = restaurantIds.isEmpty()
-                    ? List.of()
-                    : reservationRepository.findByRestaurantIdIn(restaurantIds);
+            List<UUID> restaurantIds = scope.ownedRestaurantIds(callerEmail).orElse(null);
+            if (restaurantIds == null) {
+                reservations = reservationRepository.findAll();
+            } else {
+                reservations = restaurantIds.isEmpty()
+                        ? List.of()
+                        : reservationRepository.findByRestaurantIdIn(restaurantIds);
+            }
         }
         return reservations.stream().map(r -> toResponse(r, expand)).toList();
     }
@@ -297,27 +294,8 @@ public class ReservationService {
     private Reservation find(UUID id, String callerEmail) {
         Reservation reservation = reservationRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Reservation", id));
-        Optional<UUID> callerOrganizationId = callerOrganization.resolve(callerEmail);
-        if (callerOrganizationId.isPresent()) {
-            UUID owner = restaurantRepository.findById(reservation.getRestaurantId())
-                    .map(Restaurant::getOrganizationId)
-                    .orElse(null);
-            if (!callerOrganizationId.get().equals(owner)) {
-                throw new ResourceNotFoundException("Reservation", id);
-            }
-        }
+        scope.requireOwnedThrough(reservation.getRestaurantId(), "Reservation", id, callerEmail);
         return reservation;
-    }
-
-    /** Same rule as {@link #find}, applied to the restaurant a reservation is being attached to. */
-    private Restaurant requireRestaurantAccess(UUID restaurantId, Optional<UUID> callerOrganizationId) {
-        Restaurant restaurant = restaurantRepository.findById(restaurantId)
-                .orElseThrow(() -> new ResourceNotFoundException("Restaurant", restaurantId));
-        if (callerOrganizationId.isPresent()
-                && !callerOrganizationId.get().equals(restaurant.getOrganizationId())) {
-            throw new ResourceNotFoundException("Restaurant", restaurantId);
-        }
-        return restaurant;
     }
 
     /**
@@ -329,7 +307,7 @@ public class ReservationService {
         if (!Boolean.TRUE.equals(request.exemptGuarantee())) {
             return null;
         }
-        return callerOrganization.resolveUserId(callerEmail)
+        return scope.userIdOf(callerEmail)
                 .orElseThrow(() -> new InvalidRequestException(
                         "Only a signed-in staff member can waive a guarantee"));
     }

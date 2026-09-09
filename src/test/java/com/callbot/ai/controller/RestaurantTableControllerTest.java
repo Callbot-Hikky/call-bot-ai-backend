@@ -47,7 +47,7 @@ class RestaurantTableControllerTest {
 
     @Test
     void create_withValidPayload_returns201() throws Exception {
-        when(tableService.create(any())).thenReturn(sample());
+        when(tableService.create(any(), any())).thenReturn(sample());
 
         mockMvc.perform(post("/api/tables")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -68,7 +68,7 @@ class RestaurantTableControllerTest {
 
     @Test
     void get_returns200() throws Exception {
-        when(tableService.get(any())).thenReturn(sample());
+        when(tableService.get(any(), any())).thenReturn(sample());
 
         mockMvc.perform(get("/api/tables/" + UUID.randomUUID()))
                 .andExpect(status().isOk())
@@ -77,7 +77,7 @@ class RestaurantTableControllerTest {
 
     @Test
     void get_whenNotFound_returns404() throws Exception {
-        when(tableService.get(any()))
+        when(tableService.get(any(), any()))
                 .thenThrow(new ResourceNotFoundException("Table", UUID.randomUUID()));
 
         mockMvc.perform(get("/api/tables/" + UUID.randomUUID()))

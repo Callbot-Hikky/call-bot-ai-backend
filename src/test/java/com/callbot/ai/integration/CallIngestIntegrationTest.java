@@ -1,5 +1,6 @@
 package com.callbot.ai.integration;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -96,8 +97,9 @@ class CallIngestIntegrationTest extends AbstractIntegrationTest {
 
     private void seedRestaurant(String ownerEmail, String phone) throws Exception {
         String token = registerAndGetToken(ownerEmail);
-        UUID organizationId = organizationRepository.save(
-                Organization.builder().name("Ingest Org").build()).getId();
+        // A restaurant belongs to the signed-in owner's own organization; creating one
+        // under an unrelated organization is exactly what the scoping now refuses.
+        UUID organizationId = organizationIdOf(token);
         mockMvc.perform(post("/api/restaurants")
                 .header("Authorization", "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -105,6 +107,14 @@ class CallIngestIntegrationTest extends AbstractIntegrationTest {
                         {"organizationId":"%s","name":"Ingest Resto","phoneNumber":"%s"}"""
                         .formatted(organizationId, phone)))
                 .andExpect(status().isCreated());
+    }
+
+    private UUID organizationIdOf(String token) throws Exception {
+        String me = mockMvc.perform(get("/api/me")
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return UUID.fromString(JsonPath.read(me, "$.organizationId"));
     }
 
     private String registerAndGetToken(String email) throws Exception {

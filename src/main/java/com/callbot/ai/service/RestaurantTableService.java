@@ -10,7 +10,7 @@ import com.callbot.ai.dto.RestaurantTableRequest;
 import com.callbot.ai.dto.RestaurantTableResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.model.RestaurantTable;
-import com.callbot.ai.repository.RestaurantRepository;
+import com.callbot.ai.security.OrganizationScope;
 import com.callbot.ai.repository.RestaurantTableRepository;
 
 import lombok.RequiredArgsConstructor;
@@ -21,10 +21,10 @@ import lombok.RequiredArgsConstructor;
 public class RestaurantTableService {
 
     private final RestaurantTableRepository tableRepository;
-    private final RestaurantRepository restaurantRepository;
+    private final OrganizationScope scope;
 
-    public RestaurantTableResponse create(RestaurantTableRequest request) {
-        requireRestaurant(request.restaurantId());
+    public RestaurantTableResponse create(RestaurantTableRequest request, String callerEmail) {
+        scope.requireOwnedRestaurant(request.restaurantId(), callerEmail);
         RestaurantTable table = RestaurantTable.builder()
                 .restaurantId(request.restaurantId())
                 .name(request.name())
@@ -36,19 +36,19 @@ public class RestaurantTableService {
     }
 
     @Transactional(readOnly = true)
-    public List<RestaurantTableResponse> list(UUID restaurantId) {
-        List<RestaurantTable> tables = restaurantId != null
-                ? tableRepository.findByRestaurantId(restaurantId)
-                : tableRepository.findAll();
+    public List<RestaurantTableResponse> list(UUID restaurantId, String callerEmail) {
+        List<RestaurantTable> tables = listFor(restaurantId, callerEmail);
         return tables.stream().map(RestaurantTableResponse::from).toList();
     }
 
     @Transactional(readOnly = true)
-    public RestaurantTableResponse get(UUID id) {
-        return RestaurantTableResponse.from(find(id));
+    public RestaurantTableResponse get(UUID id, String callerEmail) {
+        RestaurantTable entity = find(id);
+        requireOwned(entity, id, callerEmail);
+        return RestaurantTableResponse.from(entity);
     }
 
-    public RestaurantTableResponse update(UUID id, RestaurantTableRequest request) {
+    public RestaurantTableResponse update(UUID id, RestaurantTableRequest request, String callerEmail) {
         RestaurantTable table = find(id);
         table.setName(request.name());
         table.setCapacity(request.capacity());
@@ -59,10 +59,8 @@ public class RestaurantTableService {
         return RestaurantTableResponse.from(tableRepository.save(table));
     }
 
-    public void delete(UUID id) {
-        if (!tableRepository.existsById(id)) {
-            throw new ResourceNotFoundException("Table", id);
-        }
+    public void delete(UUID id, String callerEmail) {
+        requireOwned(find(id), id, callerEmail);
         tableRepository.deleteById(id);
     }
 
@@ -71,9 +69,23 @@ public class RestaurantTableService {
                 .orElseThrow(() -> new ResourceNotFoundException("Table", id));
     }
 
-    private void requireRestaurant(UUID restaurantId) {
-        if (!restaurantRepository.existsById(restaurantId)) {
-            throw new ResourceNotFoundException("Restaurant", restaurantId);
-        }
+    /** The caller may only reach restauranttables under a restaurant they own. */
+    private void requireOwned(RestaurantTable entity, UUID id, String callerEmail) {
+        scope.requireOwnedThrough(entity.getRestaurantId(), "RestaurantTable", id, callerEmail);
     }
+
+    /**
+     * The restaurant filter narrows the list; it can never widen it. A signed-in caller
+     * asking for someone else's restaurant gets nothing, not that restaurant's data.
+     */
+    private List<RestaurantTable> listFor(UUID restaurantId, String callerEmail) {
+        if (restaurantId != null) {
+            scope.requireOwnedRestaurant(restaurantId, callerEmail);
+            return tableRepository.findByRestaurantId(restaurantId);
+        }
+        return scope.ownedRestaurantIds(callerEmail)
+                .map(tableRepository::findByRestaurantIdIn)
+                .orElseGet(tableRepository::findAll);
+    }
+
 }

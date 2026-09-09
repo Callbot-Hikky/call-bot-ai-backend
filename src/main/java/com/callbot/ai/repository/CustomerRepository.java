@@ -12,5 +12,8 @@ public interface CustomerRepository extends JpaRepository<Customer, UUID> {
 
     List<Customer> findByRestaurantId(UUID restaurantId);
 
+    /** Everything under the restaurants one organization owns. */
+    List<Customer> findByRestaurantIdIn(List<UUID> restaurantIds);
+
     Optional<Customer> findByRestaurantIdAndPhone(UUID restaurantId, String phone);
 }

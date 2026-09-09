@@ -39,34 +39,39 @@ public class RestaurantController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public RestaurantResponse create(@Valid @RequestBody RestaurantRequest request) {
-        return restaurantService.create(request);
+    public RestaurantResponse create(@Valid @RequestBody RestaurantRequest request,
+            Authentication authentication) {
+        return restaurantService.create(request, AuthenticatedCaller.emailOf(authentication));
     }
 
     @GetMapping
-    public List<RestaurantResponse> list(@RequestParam(required = false) UUID organizationId) {
-        return restaurantService.list(organizationId);
+    public List<RestaurantResponse> list(@RequestParam(required = false) UUID organizationId,
+            Authentication authentication) {
+        return restaurantService.list(organizationId, AuthenticatedCaller.emailOf(authentication));
     }
 
     @GetMapping("/{id}")
-    public RestaurantResponse get(@PathVariable UUID id) {
-        return restaurantService.get(id);
+    public RestaurantResponse get(@PathVariable UUID id, Authentication authentication) {
+        return restaurantService.get(id, AuthenticatedCaller.emailOf(authentication));
     }
 
     @PutMapping("/{id}")
-    public RestaurantResponse update(@PathVariable UUID id, @Valid @RequestBody RestaurantRequest request) {
-        return restaurantService.update(id, request);
+    public RestaurantResponse update(@PathVariable UUID id,
+            @Valid @RequestBody RestaurantRequest request, Authentication authentication) {
+        return restaurantService.update(id, request, AuthenticatedCaller.emailOf(authentication));
     }
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable UUID id) {
-        restaurantService.delete(id);
+    public void delete(@PathVariable UUID id, Authentication authentication) {
+        restaurantService.delete(id, AuthenticatedCaller.emailOf(authentication));
     }
 
     @PatchMapping("/{id}/attributes")
-    public RestaurantResponse updateAttributes(@PathVariable UUID id, @RequestBody Map<String, Object> attributes) {
-        return restaurantService.updateAttributes(id, attributes);
+    public RestaurantResponse updateAttributes(@PathVariable UUID id,
+            @RequestBody Map<String, Object> attributes, Authentication authentication) {
+        return restaurantService.updateAttributes(id, attributes,
+                AuthenticatedCaller.emailOf(authentication));
     }
 
     @GetMapping("/{id}/guarantee-settings")
