@@ -30,7 +30,10 @@ import com.callbot.ai.gateway.stripe.ConnectWebhookEvent;
 import com.callbot.ai.gateway.stripe.RegisteredCard;
 import com.callbot.ai.gateway.stripe.StripeConnectGateway;
 import com.callbot.ai.gateway.stripe.StripeConnectWebhookParser;
+import com.callbot.ai.model.ChargeKind;
+import com.callbot.ai.model.ChargeStatus;
 import com.callbot.ai.model.Reservation;
+import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.service.NoShowPenaltyJob;
 import com.callbot.ai.support.AbstractIntegrationTest;
@@ -46,6 +49,8 @@ class NoShowGuaranteeIntegrationTest extends AbstractIntegrationTest {
     private MockMvc mockMvc;
     @Autowired
     private ReservationRepository reservationRepository;
+    @Autowired
+    private ReservationChargeRepository charges;
     @Autowired
     private NoShowPenaltyJob penaltyJob;
     @MockitoBean
@@ -118,7 +123,7 @@ class NoShowGuaranteeIntegrationTest extends AbstractIntegrationTest {
 
         Reservation reservation = reservation(reservationId);
         assertThat(reservation.getNoShowRecordedBy()).isNotNull();
-        assertThat(reservation.getPenaltyChargedAt()).isNull();
+        assertThat(charges.findByReservationId(reservation.getId())).isEmpty();
 
         // Inside the window, the sweep leaves the card alone.
         penaltyJob.chargeDuePenalties();
@@ -133,9 +138,15 @@ class NoShowGuaranteeIntegrationTest extends AbstractIntegrationTest {
 
         Reservation charged = reservation(reservationId);
         assertThat(charged.getGuaranteeStatus()).isEqualTo("charged");
-        assertThat(charged.getPenaltyChargedAt()).isNotNull();
-        // No commission is taken on a penalty.
-        assertThat(charged.getApplicationFeeCents()).isZero();
+        assertThat(charges.findByReservationId(charged.getId())).singleElement()
+                .satisfies(penalty -> {
+                    assertThat(penalty.getKind()).isEqualTo(ChargeKind.NO_SHOW_PENALTY);
+                    assertThat(penalty.getStatus()).isEqualTo(ChargeStatus.PAID);
+                    assertThat(penalty.getPaidAt()).isNotNull();
+                    assertThat(penalty.getStripePaymentIntentId()).isEqualTo("pi_penalty");
+                    // No commission is taken on a penalty.
+                    assertThat(penalty.getApplicationFeeCents()).isZero();
+                });
     }
 
     @Test

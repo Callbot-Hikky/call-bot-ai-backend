@@ -103,7 +103,8 @@ public class ReservationNotificationListener {
         contextFor(event.reservationId(), "guest cancellation").ifPresent(context -> {
             discord.sendClientSmsMessage(event.refunded()
                     ? templates.forClientRefundIssued(
-                            context.reservation(), context.customer(), context.restaurant())
+                            context.reservation(), context.customer(), context.restaurant(),
+                            event.refundedAmountCents())
                     : templates.forClientCancellationConfirmed(
                             context.reservation(), context.customer(), context.restaurant()));
             discord.sendReservationMessage(templates.forRestaurantCancelledByGuest(

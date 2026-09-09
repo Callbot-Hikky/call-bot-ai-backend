@@ -111,34 +111,9 @@ public class Reservation {
     @Column(name = "guarantee_refund_window_hours")
     private Integer guaranteeRefundWindowHours;
 
-    @Column(name = "stripe_session_id")
-    private String stripeSessionId;
-
-    @Column(name = "stripe_payment_intent_id")
-    private String stripePaymentIntentId;
-
-    /** Alloquence's commission on this booking fee, in cents. Zero on no-show penalties. */
-    @Column(name = "application_fee_cents")
-    private Integer applicationFeeCents;
-
-    @Column(name = "paid_at")
-    private OffsetDateTime paidAt;
-
-    @Column(name = "refunded_at")
-    private OffsetDateTime refundedAt;
-
-    @Column(name = "refunded_amount_cents")
-    private Integer refundedAmountCents;
-
-    /** When this money may leave for the restaurateur's bank: a day after the service. */
-    @Column(name = "payout_eligible_at")
-    private OffsetDateTime payoutEligibleAt;
-
-    @Column(name = "paid_out_at")
-    private OffsetDateTime paidOutAt;
-
-    @Column(name = "payout_id")
-    private UUID payoutId;
+    // Money collected on this reservation lives in the charge register, one row per
+    // movement: see ReservationCharge. A reservation carries none of it, because it can
+    // carry several of them — a booking fee, then the top-up a larger party owes.
 
     /** Card registered for a no-show guarantee, held on the restaurant's own Stripe account. */
     @Column(name = "stripe_customer_id")
@@ -168,15 +143,9 @@ public class Reservation {
     @Column(name = "penalty_attempts", nullable = false)
     private int penaltyAttempts = 0;
 
-    @Column(name = "penalty_charged_at")
-    private OffsetDateTime penaltyChargedAt;
-
-    /**
-     * Kept apart from {@code stripePaymentIntentId}, which a bank dispute looks up: a
-     * dispute over a penalty is not one Alloquence absorbs, having taken no commission.
-     */
-    @Column(name = "stripe_penalty_intent_id")
-    private String stripePenaltyIntentId;
+    // Whether the penalty was taken, and under which payment intent, is a charge of kind
+    // no_show_penalty in the register. Only the retry state stays here: when the debit
+    // becomes due and how many times it has been tried are scheduling, not money.
 
     @PrePersist
     void onCreate() {

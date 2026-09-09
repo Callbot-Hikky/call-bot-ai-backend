@@ -197,7 +197,7 @@ public class ReservationMessageTemplates {
 
     /** Message 6: cancelled in time, money on its way back. */
     public String forClientRefundIssued(Reservation reservation, Customer customer,
-            Restaurant restaurant) {
+            Restaurant restaurant, int refundedAmountCents) {
         return """
                 %s,
                 Votre réservation chez **%s** du %s est annulée, et vos frais de
@@ -211,7 +211,7 @@ public class ReservationMessageTemplates {
                 Vous pouvez rappeler le restaurant au %s pour réserver à nouveau."""
                 .formatted(greeting(customer), restaurant.getName(),
                         formatDateTime(reservation.getStartsAt(), restaurant.getTimezone()),
-                        formatAmount(reservation.getRefundedAmountCents(), reservation.getCurrency()),
+                        formatAmount(refundedAmountCents, reservation.getCurrency()),
                         formatPhoneLink(restaurant.getPhoneNumber()));
     }
 

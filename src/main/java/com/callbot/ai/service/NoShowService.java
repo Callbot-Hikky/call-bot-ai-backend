@@ -10,10 +10,13 @@ import org.springframework.transaction.annotation.Transactional;
 import com.callbot.ai.dto.ReservationResponse;
 import com.callbot.ai.exception.InvalidRequestException;
 import com.callbot.ai.exception.ResourceNotFoundException;
+import com.callbot.ai.model.ChargeKind;
+import com.callbot.ai.model.ChargeStatus;
 import com.callbot.ai.model.GuaranteeMode;
 import com.callbot.ai.model.GuaranteeStatus;
 import com.callbot.ai.model.Reservation;
 import com.callbot.ai.model.ReservationStatus;
+import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.security.OrganizationScope;
 
@@ -39,6 +42,7 @@ public class NoShowService {
     public static final Duration CANCELLATION_WINDOW = Duration.ofHours(2);
 
     private final ReservationRepository reservationRepository;
+    private final ReservationChargeRepository charges;
     private final OrganizationScope scope;
 
     public ReservationResponse record(UUID reservationId, String callerEmail) {
@@ -66,7 +70,7 @@ public class NoShowService {
         if (reservation.getNoShowRecordedAt() == null) {
             throw new InvalidRequestException("Aucune absence n'a été constatée sur cette réservation");
         }
-        if (reservation.getPenaltyChargedAt() != null) {
+        if (penaltyTaken(reservation)) {
             throw new InvalidRequestException(
                     "La pénalité a déjà été débitée : le remboursement doit être fait à la main");
         }
@@ -102,8 +106,14 @@ public class NoShowService {
     private boolean chargeInFlight(Reservation reservation) {
         return reservation.getPenaltyAttempts() > 0
                 && reservation.getPenaltyDueAt() == null
-                && reservation.getPenaltyChargedAt() == null
+                && !penaltyTaken(reservation)
                 && GuaranteeStatus.SECURED.equals(reservation.getGuaranteeStatus());
+    }
+
+    /** Whether the register already holds a settled penalty for this reservation. */
+    private boolean penaltyTaken(Reservation reservation) {
+        return charges.existsByReservationIdAndKindAndStatus(
+                reservation.getId(), ChargeKind.NO_SHOW_PENALTY, ChargeStatus.PAID);
     }
 
     /** A penalty is only owed where one was agreed and a card actually registered. */

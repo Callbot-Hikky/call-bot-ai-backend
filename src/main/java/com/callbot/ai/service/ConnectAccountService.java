@@ -14,9 +14,10 @@ import com.callbot.ai.exception.InvalidRequestException;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.gateway.stripe.ConnectAccountStatus;
 import com.callbot.ai.gateway.stripe.StripeConnectGateway;
+import com.callbot.ai.model.ChargeKind;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.model.User;
-import com.callbot.ai.repository.ReservationRepository;
+import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 import com.callbot.ai.repository.UserRepository;
 import com.callbot.ai.security.OrganizationScope;
@@ -40,7 +41,7 @@ public class ConnectAccountService {
     private static final Logger log = LoggerFactory.getLogger(ConnectAccountService.class);
 
     private final RestaurantRepository restaurantRepository;
-    private final ReservationRepository reservationRepository;
+    private final ReservationChargeRepository charges;
     private final UserRepository userRepository;
     private final OrganizationScope scope;
     private final StripeConnectGateway connect;
@@ -127,7 +128,7 @@ public class ConnectAccountService {
     /** The dispute count is only meaningful next to how many fees were actually taken. */
     private ConnectAccountResponse describe(Restaurant restaurant) {
         return ConnectAccountResponse.from(restaurant,
-                reservationRepository.countPaidFor(restaurant.getId()));
+                charges.countPaidFor(restaurant.getId(), ChargeKind.BOOKING_FEE));
     }
 
     private void requireSignedIn(String callerEmail) {

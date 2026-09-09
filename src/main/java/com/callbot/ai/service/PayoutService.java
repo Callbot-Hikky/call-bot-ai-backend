@@ -3,9 +3,11 @@ package com.callbot.ai.service;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -18,10 +20,11 @@ import com.callbot.ai.dto.PayoutResponse;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.model.Payout;
 import com.callbot.ai.model.PayoutStatus;
-import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.ChargeStatus;
+import com.callbot.ai.model.ReservationCharge;
 import com.callbot.ai.repository.RestaurantRepository;
 import com.callbot.ai.repository.PayoutRepository;
-import com.callbot.ai.repository.ReservationRepository;
+import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.security.OrganizationScope;
 
 import lombok.RequiredArgsConstructor;
@@ -49,14 +52,14 @@ public class PayoutService {
 
     private static final Logger log = LoggerFactory.getLogger(PayoutService.class);
 
-    private final ReservationRepository reservationRepository;
+    private final ReservationChargeRepository charges;
     private final RestaurantRepository restaurantRepository;
     private final PayoutRepository payoutRepository;
     private final OrganizationScope scope;
 
     @Transactional(readOnly = true)
     public List<UUID> restaurantsWithMoneyDue(OffsetDateTime now) {
-        return reservationRepository.findRestaurantsWithDuePayouts(now);
+        return charges.findRestaurantsWithDuePayouts(ChargeStatus.PAID, now);
     }
 
     @Transactional(readOnly = true)
@@ -68,30 +71,40 @@ public class PayoutService {
     }
 
     /**
-     * Step 1. Locks what is due, groups it by currency, and stamps each reservation with
-     * the payout that now owns it. Committing here is what makes the claim exclusive.
+     * Step 1. Locks what is due, groups it by currency, and stamps each charge with the
+     * payout that now owns it. Committing here is what makes the claim exclusive.
+     *
+     * <p>What is grouped is charges, not reservations: a party that grew paid twice, and
+     * both movements are owed to the restaurateur. The reservation count reported on the
+     * payout therefore counts reservations once, however many charges each contributed.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public List<Payout> claim(UUID restaurantId, OffsetDateTime now) {
-        List<Reservation> due = reservationRepository.lockDuePayoutsFor(restaurantId, now);
+        List<ReservationCharge> due =
+                charges.lockDuePayoutsFor(restaurantId, ChargeStatus.PAID, now);
         if (due.isEmpty()) {
             // Another instance took them between the two queries.
             return List.of();
         }
 
-        Map<String, List<Reservation>> byCurrency = new LinkedHashMap<>();
-        for (Reservation reservation : due) {
-            byCurrency.computeIfAbsent(reservation.getCurrency(), currency -> new ArrayList<>())
-                    .add(reservation);
+        Map<String, List<ReservationCharge>> byCurrency = new LinkedHashMap<>();
+        for (ReservationCharge charge : due) {
+            byCurrency.computeIfAbsent(charge.getCurrency(), currency -> new ArrayList<>())
+                    .add(charge);
         }
 
         List<Payout> claimed = new ArrayList<>();
         OffsetDateTime claimedAt = OffsetDateTime.now();
-        for (Map.Entry<String, List<Reservation>> entry : byCurrency.entrySet()) {
-            List<Reservation> reservations = entry.getValue();
-            int amountCents = reservations.stream().mapToInt(PayoutService::restaurateurShareOf).sum();
+        for (Map.Entry<String, List<ReservationCharge>> entry : byCurrency.entrySet()) {
+            List<ReservationCharge> settled = entry.getValue();
+            int amountCents = settled.stream()
+                    .mapToInt(ReservationCharge::restaurateurShareCents).sum();
             if (amountCents <= 0) {
                 continue;
+            }
+            Set<UUID> reservations = new LinkedHashSet<>();
+            for (ReservationCharge charge : settled) {
+                reservations.add(charge.getReservationId());
             }
             Payout payout = payoutRepository.save(Payout.builder()
                     .restaurantId(restaurantId)
@@ -100,11 +113,11 @@ public class PayoutService {
                     .reservationCount(reservations.size())
                     .status(PayoutStatus.PENDING)
                     .build());
-            for (Reservation reservation : reservations) {
-                reservation.setPaidOutAt(claimedAt);
-                reservation.setPayoutId(payout.getId());
+            for (ReservationCharge charge : settled) {
+                charge.setPaidOutAt(claimedAt);
+                charge.setPayoutId(payout.getId());
             }
-            reservationRepository.saveAll(reservations);
+            charges.saveAll(settled);
             claimed.add(payout);
         }
         return claimed;
@@ -130,14 +143,14 @@ public class PayoutService {
         release(payoutId);
     }
 
-    /** Hands the reservations back to the next sweep after a refused transfer. */
+    /** Hands the charges back to the next sweep after a refused transfer. */
     private void release(UUID payoutId) {
-        List<Reservation> reservations = reservationRepository.findByPayoutId(payoutId);
-        for (Reservation reservation : reservations) {
-            reservation.setPaidOutAt(null);
-            reservation.setPayoutId(null);
+        List<ReservationCharge> claimed = charges.findByPayoutId(payoutId);
+        for (ReservationCharge charge : claimed) {
+            charge.setPaidOutAt(null);
+            charge.setPayoutId(null);
         }
-        reservationRepository.saveAll(reservations);
+        charges.saveAll(claimed);
     }
 
     /** The restaurant, only if Stripe will actually accept a transfer to its account. */
@@ -146,12 +159,5 @@ public class PayoutService {
         return restaurantRepository.findById(restaurantId)
                 .filter(restaurant -> restaurant.getStripeAccountId() != null
                         && restaurant.isStripePayoutsEnabled());
-    }
-
-    /** The restaurateur receives the fee less Alloquence's commission, as Stripe already split it. */
-    private static int restaurateurShareOf(Reservation reservation) {
-        int gross = reservation.getGuaranteeAmountCents() == null ? 0 : reservation.getGuaranteeAmountCents();
-        int fee = reservation.getApplicationFeeCents() == null ? 0 : reservation.getApplicationFeeCents();
-        return Math.max(0, gross - fee);
     }
 }

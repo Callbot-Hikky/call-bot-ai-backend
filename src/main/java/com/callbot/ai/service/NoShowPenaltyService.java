@@ -14,12 +14,16 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.callbot.ai.gateway.stripe.NoShowCharge;
+import com.callbot.ai.model.ChargeKind;
+import com.callbot.ai.model.ChargeStatus;
 import com.callbot.ai.model.GuaranteeStatus;
 import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.ReservationCharge;
 import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.notification.ReservationPenaltyAbandonedEvent;
 import com.callbot.ai.notification.ReservationPenaltyChargedEvent;
+import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 
@@ -52,6 +56,7 @@ public class NoShowPenaltyService {
     private static final Duration PAYOUT_DELAY_AFTER_SERVICE = Duration.ofDays(1);
 
     private final ReservationRepository reservationRepository;
+    private final ReservationChargeRepository charges;
     private final RestaurantRepository restaurantRepository;
     private final ApplicationEventPublisher events;
 
@@ -65,7 +70,8 @@ public class NoShowPenaltyService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public List<Reservation> claimDuePenalties(OffsetDateTime now) {
-        List<Reservation> due = reservationRepository.lockDuePenalties(now, MAX_ATTEMPTS);
+        List<Reservation> due = reservationRepository.lockDuePenalties(
+                now, MAX_ATTEMPTS, ChargeKind.NO_SHOW_PENALTY, ChargeStatus.PAID);
         for (Reservation reservation : due) {
             reservation.setPenaltyAttempts(reservation.getPenaltyAttempts() + 1);
             reservation.setPenaltyDueAt(null);
@@ -97,15 +103,24 @@ public class NoShowPenaltyService {
 
         OffsetDateTime now = OffsetDateTime.now();
         reservation.setGuaranteeStatus(GuaranteeStatus.CHARGED);
-        reservation.setStripePenaltyIntentId(paymentIntentId);
-        reservation.setPenaltyChargedAt(now);
         reservation.setPenaltyDueAt(null);
-        // The money is the restaurateur's and owes Alloquence nothing. It follows the
-        // same rule as every other sum: payable a day after the service.
-        reservation.setPaidAt(now);
-        reservation.setApplicationFeeCents(0);
-        reservation.setPayoutEligibleAt(reservation.getEndsAt().plus(PAYOUT_DELAY_AFTER_SERVICE));
         reservationRepository.save(reservation);
+
+        // The penalty is an entry in the register like any other, save for one thing: the
+        // money is entirely the restaurateur's and owes Alloquence no commission
+        // (decision 29). It follows the same rule as every other sum for the rest —
+        // payable a day after the service.
+        charges.save(ReservationCharge.builder()
+                .reservationId(reservationId)
+                .kind(ChargeKind.NO_SHOW_PENALTY)
+                .status(ChargeStatus.PAID)
+                .amountCents(reservation.getGuaranteeAmountCents())
+                .applicationFeeCents(0)
+                .currency(reservation.getCurrency())
+                .stripePaymentIntentId(paymentIntentId)
+                .paidAt(now)
+                .payoutEligibleAt(reservation.getEndsAt().plus(PAYOUT_DELAY_AFTER_SERVICE))
+                .build());
 
         events.publishEvent(new ReservationPenaltyChargedEvent(reservationId));
     }
@@ -161,7 +176,8 @@ public class NoShowPenaltyService {
     @Transactional(readOnly = true)
     public List<Reservation> cardsToForget(OffsetDateTime now) {
         return reservationRepository.findCardsToDetach(
-                now.minus(CARD_RETENTION_AFTER_SERVICE), MAX_ATTEMPTS);
+                now.minus(CARD_RETENTION_AFTER_SERVICE), MAX_ATTEMPTS,
+                ChargeKind.NO_SHOW_PENALTY, ChargeStatus.PAID);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
