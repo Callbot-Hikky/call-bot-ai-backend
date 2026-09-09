@@ -45,6 +45,17 @@ public class GlobalExceptionHandler {
                 .body(ApiError.of(HttpStatus.BAD_REQUEST.value(), "Bad Request", ex.getMessage()));
     }
 
+    /**
+     * A change of covers the rule turns down. Answered as a conflict carrying the reason
+     * as its code — same shape as the constraint conflicts below — so the dashboard can
+     * show staff why, instead of a bare failure.
+     */
+    @ExceptionHandler(PartySizeChangeRejectedException.class)
+    public ResponseEntity<ApiError> handlePartySizeChangeRejected(PartySizeChangeRejectedException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of(HttpStatus.CONFLICT.value(), ex.getReason(), ex.getMessage()));
+    }
+
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<ApiError> handleNotFound(ResourceNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
