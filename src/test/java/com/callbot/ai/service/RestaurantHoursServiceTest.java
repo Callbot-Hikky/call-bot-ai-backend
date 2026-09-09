@@ -3,6 +3,7 @@ package com.callbot.ai.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -22,7 +23,7 @@ import com.callbot.ai.dto.RestaurantHoursRequest;
 import com.callbot.ai.dto.RestaurantHoursResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.repository.RestaurantHoursRepository;
-import com.callbot.ai.repository.RestaurantRepository;
+import com.callbot.ai.security.OrganizationScope;
 
 @ExtendWith(MockitoExtension.class)
 class RestaurantHoursServiceTest {
@@ -30,9 +31,11 @@ class RestaurantHoursServiceTest {
     @Mock
     private RestaurantHoursRepository hoursRepository;
     @Mock
-    private RestaurantRepository restaurantRepository;
+    private OrganizationScope scope;
     @InjectMocks
     private RestaurantHoursService hoursService;
+
+    private static final String CALLER = "owner@resto.fr";
 
     private final UUID restaurantId = UUID.randomUUID();
 
@@ -43,10 +46,10 @@ class RestaurantHoursServiceTest {
 
     @Test
     void create_whenRestaurantExists_savesWithDefaultNotClosed() {
-        when(restaurantRepository.existsById(restaurantId)).thenReturn(true);
+        
         when(hoursRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        RestaurantHoursResponse response = hoursService.create(request());
+        RestaurantHoursResponse response = hoursService.create(request(), CALLER);
 
         assertThat(response.service()).isEqualTo("dinner");
         assertThat(response.dayOfWeek()).isEqualTo((short) 1);
@@ -55,9 +58,10 @@ class RestaurantHoursServiceTest {
 
     @Test
     void create_whenRestaurantMissing_throwsAndDoesNotSave() {
-        when(restaurantRepository.existsById(restaurantId)).thenReturn(false);
+        doThrow(new ResourceNotFoundException("Restaurant", restaurantId))
+                .when(scope).requireOwnedRestaurant(restaurantId, CALLER);
 
-        assertThatThrownBy(() -> hoursService.create(request()))
+        assertThatThrownBy(() -> hoursService.create(request(), CALLER))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(hoursRepository, never()).save(any());
     }
@@ -67,16 +71,16 @@ class RestaurantHoursServiceTest {
         UUID id = UUID.randomUUID();
         when(hoursRepository.findById(id)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> hoursService.get(id))
+        assertThatThrownBy(() -> hoursService.get(id, CALLER))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
     @Test
     void delete_whenMissing_throwsAndDoesNotDelete() {
         UUID id = UUID.randomUUID();
-        when(hoursRepository.existsById(id)).thenReturn(false);
+        when(hoursRepository.findById(id)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> hoursService.delete(id))
+        assertThatThrownBy(() -> hoursService.delete(id, CALLER))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(hoursRepository, never()).deleteById(any());
     }
@@ -85,7 +89,7 @@ class RestaurantHoursServiceTest {
     void list_withRestaurantId_filters() {
         when(hoursRepository.findByRestaurantId(restaurantId)).thenReturn(List.of());
 
-        hoursService.list(restaurantId);
+        hoursService.list(restaurantId, CALLER);
 
         verify(hoursRepository).findByRestaurantId(restaurantId);
         verify(hoursRepository, never()).findAll();

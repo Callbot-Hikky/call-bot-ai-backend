@@ -11,7 +11,7 @@ import com.callbot.ai.dto.CustomerResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.model.Customer;
 import com.callbot.ai.repository.CustomerRepository;
-import com.callbot.ai.repository.RestaurantRepository;
+import com.callbot.ai.security.OrganizationScope;
 
 import lombok.RequiredArgsConstructor;
 
@@ -21,10 +21,10 @@ import lombok.RequiredArgsConstructor;
 public class CustomerService {
 
     private final CustomerRepository customerRepository;
-    private final RestaurantRepository restaurantRepository;
+    private final OrganizationScope scope;
 
-    public CustomerResponse create(CustomerRequest request) {
-        requireRestaurant(request.restaurantId());
+    public CustomerResponse create(CustomerRequest request, String callerEmail) {
+        scope.requireOwnedRestaurant(request.restaurantId(), callerEmail);
         // Upsert par (restaurant, phone) : un habitue (deja appele par le callbot
         // ou reserve auparavant) reutilise sa fiche au lieu de violer la contrainte
         // d'unicite. On ne remplace que les champs fournis (pas d'ecrasement par null).
@@ -52,27 +52,29 @@ public class CustomerService {
     // Relecture par (restaurant, phone) : sert au controller pour recuperer la
     // fiche gagnante quand deux creations concurrentes du meme numero se croisent.
     @Transactional(readOnly = true)
-    public CustomerResponse findByPhone(UUID restaurantId, String phone) {
+    public CustomerResponse findByPhone(UUID restaurantId, String phone, String callerEmail) {
+        scope.requireOwnedRestaurant(restaurantId, callerEmail);
         return customerRepository.findByRestaurantIdAndPhone(restaurantId, phone)
                 .map(CustomerResponse::from)
                 .orElseThrow(() -> new ResourceNotFoundException("Customer", phone));
     }
 
     @Transactional(readOnly = true)
-    public List<CustomerResponse> list(UUID restaurantId) {
-        List<Customer> customers = restaurantId != null
-                ? customerRepository.findByRestaurantId(restaurantId)
-                : customerRepository.findAll();
+    public List<CustomerResponse> list(UUID restaurantId, String callerEmail) {
+List<Customer> customers = listFor(restaurantId, callerEmail);
         return customers.stream().map(CustomerResponse::from).toList();
     }
 
     @Transactional(readOnly = true)
-    public CustomerResponse get(UUID id) {
-        return CustomerResponse.from(find(id));
+    public CustomerResponse get(UUID id, String callerEmail) {
+        Customer entity = find(id);
+        requireOwned(entity, id, callerEmail);
+        return CustomerResponse.from(entity);
     }
 
-    public CustomerResponse update(UUID id, CustomerRequest request) {
+    public CustomerResponse update(UUID id, CustomerRequest request, String callerEmail) {
         Customer customer = find(id);
+        requireOwned(customer, id, callerEmail);
         customer.setPhone(request.phone());
         customer.setFirstName(request.firstName());
         customer.setLastName(request.lastName());
@@ -81,10 +83,8 @@ public class CustomerService {
         return CustomerResponse.from(customerRepository.save(customer));
     }
 
-    public void delete(UUID id) {
-        if (!customerRepository.existsById(id)) {
-            throw new ResourceNotFoundException("Customer", id);
-        }
+    public void delete(UUID id, String callerEmail) {
+        requireOwned(find(id), id, callerEmail);
         customerRepository.deleteById(id);
     }
 
@@ -93,9 +93,23 @@ public class CustomerService {
                 .orElseThrow(() -> new ResourceNotFoundException("Customer", id));
     }
 
-    private void requireRestaurant(UUID restaurantId) {
-        if (!restaurantRepository.existsById(restaurantId)) {
-            throw new ResourceNotFoundException("Restaurant", restaurantId);
-        }
+    /** The caller may only reach customers under a restaurant they own. */
+    private void requireOwned(Customer entity, UUID id, String callerEmail) {
+        scope.requireOwnedThrough(entity.getRestaurantId(), "Customer", id, callerEmail);
     }
+
+    /**
+     * The restaurant filter narrows the list; it can never widen it. A signed-in caller
+     * asking for someone else's restaurant gets nothing, not that restaurant's data.
+     */
+    private List<Customer> listFor(UUID restaurantId, String callerEmail) {
+        if (restaurantId != null) {
+            scope.requireOwnedRestaurant(restaurantId, callerEmail);
+            return customerRepository.findByRestaurantId(restaurantId);
+        }
+        return scope.ownedRestaurantIds(callerEmail)
+                .map(customerRepository::findByRestaurantIdIn)
+                .orElseGet(customerRepository::findAll);
+    }
+
 }

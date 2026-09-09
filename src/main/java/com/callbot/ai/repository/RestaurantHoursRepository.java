@@ -10,4 +10,7 @@ import com.callbot.ai.model.RestaurantHours;
 public interface RestaurantHoursRepository extends JpaRepository<RestaurantHours, UUID> {
 
     List<RestaurantHours> findByRestaurantId(UUID restaurantId);
+
+    /** Everything under the restaurants one organization owns. */
+    List<RestaurantHours> findByRestaurantIdIn(List<UUID> restaurantIds);
 }

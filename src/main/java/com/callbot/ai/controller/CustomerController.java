@@ -5,6 +5,7 @@ import java.util.UUID;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.callbot.ai.security.AuthenticatedCaller;
 import com.callbot.ai.dto.CustomerRequest;
 import com.callbot.ai.dto.CustomerResponse;
 import com.callbot.ai.service.CustomerService;
@@ -32,34 +34,37 @@ public class CustomerController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public CustomerResponse create(@Valid @RequestBody CustomerRequest request) {
+    public CustomerResponse create(@Valid @RequestBody CustomerRequest request,
+            Authentication authentication) {
+        String callerEmail = AuthenticatedCaller.emailOf(authentication);
         try {
-            return customerService.create(request);
+            return customerService.create(request, callerEmail);
         } catch (DataIntegrityViolationException race) {
             // Deux creations simultanees du meme (restaurant, phone) : celle qui
             // perd la course relit la fiche gagnante au lieu de renvoyer un 409.
-            return customerService.findByPhone(request.restaurantId(), request.phone());
+            return customerService.findByPhone(request.restaurantId(), request.phone(), callerEmail);
         }
     }
 
     @GetMapping
-    public List<CustomerResponse> list(@RequestParam(required = false) UUID restaurantId) {
-        return customerService.list(restaurantId);
+    public List<CustomerResponse> list(@RequestParam(required = false) UUID restaurantId,
+            Authentication authentication) {
+        return customerService.list(restaurantId, AuthenticatedCaller.emailOf(authentication));
     }
 
     @GetMapping("/{id}")
-    public CustomerResponse get(@PathVariable UUID id) {
-        return customerService.get(id);
+    public CustomerResponse get(@PathVariable UUID id, Authentication authentication) {
+        return customerService.get(id, AuthenticatedCaller.emailOf(authentication));
     }
 
     @PutMapping("/{id}")
-    public CustomerResponse update(@PathVariable UUID id, @Valid @RequestBody CustomerRequest request) {
-        return customerService.update(id, request);
+    public CustomerResponse update(@PathVariable UUID id, @Valid @RequestBody CustomerRequest request, Authentication authentication) {
+        return customerService.update(id, request, AuthenticatedCaller.emailOf(authentication));
     }
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable UUID id) {
-        customerService.delete(id);
+    public void delete(@PathVariable UUID id, Authentication authentication) {
+        customerService.delete(id, AuthenticatedCaller.emailOf(authentication));
     }
 }

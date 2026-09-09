@@ -47,7 +47,7 @@ class RestaurantHoursControllerTest {
 
     @Test
     void create_withValidPayload_returns201() throws Exception {
-        when(hoursService.create(any())).thenReturn(sample());
+        when(hoursService.create(any(), any())).thenReturn(sample());
 
         mockMvc.perform(post("/api/restaurant-hours")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -69,7 +69,7 @@ class RestaurantHoursControllerTest {
 
     @Test
     void get_returns200() throws Exception {
-        when(hoursService.get(any())).thenReturn(sample());
+        when(hoursService.get(any(), any())).thenReturn(sample());
 
         mockMvc.perform(get("/api/restaurant-hours/" + UUID.randomUUID()))
                 .andExpect(status().isOk())
@@ -78,7 +78,7 @@ class RestaurantHoursControllerTest {
 
     @Test
     void get_whenNotFound_returns404() throws Exception {
-        when(hoursService.get(any()))
+        when(hoursService.get(any(), any()))
                 .thenThrow(new ResourceNotFoundException("RestaurantHours", UUID.randomUUID()));
 
         mockMvc.perform(get("/api/restaurant-hours/" + UUID.randomUUID()))

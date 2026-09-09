@@ -14,6 +14,7 @@ import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.repository.OrganizationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
+import com.callbot.ai.security.OrganizationScope;
 
 import lombok.RequiredArgsConstructor;
 
@@ -24,11 +25,13 @@ public class RestaurantService {
 
     private final RestaurantRepository restaurantRepository;
     private final OrganizationRepository organizationRepository;
+    private final OrganizationScope scope;
 
-    public RestaurantResponse create(RestaurantRequest request) {
+    public RestaurantResponse create(RestaurantRequest request, String callerEmail) {
         if (!organizationRepository.existsById(request.organizationId())) {
             throw new ResourceNotFoundException("Organization", request.organizationId());
         }
+        requireOwnOrganization(request.organizationId(), callerEmail);
         Restaurant restaurant = Restaurant.builder()
                 .organizationId(request.organizationId())
                 .name(request.name())
@@ -44,21 +47,26 @@ public class RestaurantService {
         return RestaurantResponse.from(restaurantRepository.save(restaurant));
     }
 
+    /**
+     * A signed-in caller only ever sees their own organization's restaurants, whatever
+     * they pass as a filter: the parameter narrows the list, it cannot widen it.
+     */
     @Transactional(readOnly = true)
-    public List<RestaurantResponse> list(UUID organizationId) {
-        List<Restaurant> restaurants = organizationId != null
-                ? restaurantRepository.findByOrganizationId(organizationId)
+    public List<RestaurantResponse> list(UUID organizationId, String callerEmail) {
+        UUID effective = scope.organizationOf(callerEmail).orElse(organizationId);
+        List<Restaurant> restaurants = effective != null
+                ? restaurantRepository.findByOrganizationId(effective)
                 : restaurantRepository.findAll();
         return restaurants.stream().map(RestaurantResponse::from).toList();
     }
 
     @Transactional(readOnly = true)
-    public RestaurantResponse get(UUID id) {
-        return RestaurantResponse.from(find(id));
+    public RestaurantResponse get(UUID id, String callerEmail) {
+        return RestaurantResponse.from(scope.ownedRestaurant(id, callerEmail));
     }
 
-    public RestaurantResponse update(UUID id, RestaurantRequest request) {
-        Restaurant restaurant = find(id);
+    public RestaurantResponse update(UUID id, RestaurantRequest request, String callerEmail) {
+        Restaurant restaurant = scope.ownedRestaurant(id, callerEmail);
         restaurant.setName(request.name());
         restaurant.setPhoneNumber(request.phoneNumber());
         restaurant.setAddress(request.address());
@@ -79,20 +87,23 @@ public class RestaurantService {
         return RestaurantResponse.from(restaurantRepository.save(restaurant));
     }
 
-    public void delete(UUID id) {
-        if (!restaurantRepository.existsById(id)) {
-            throw new ResourceNotFoundException("Restaurant", id);
-        }
+    public void delete(UUID id, String callerEmail) {
+        scope.ownedRestaurant(id, callerEmail);
         restaurantRepository.deleteById(id);
     }
 
-    private Restaurant find(UUID id) {
-        return restaurantRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Restaurant", id));
+    /** A restaurant may only be created under the caller's own organization. */
+    private void requireOwnOrganization(UUID organizationId, String callerEmail) {
+        scope.organizationOf(callerEmail).ifPresent(caller -> {
+            if (!caller.equals(organizationId)) {
+                throw new ResourceNotFoundException("Organization", organizationId);
+            }
+        });
     }
 
-    public RestaurantResponse updateAttributes(UUID id, Map<String, Object> attributes) {
-        Restaurant restaurant = find(id);
+    public RestaurantResponse updateAttributes(UUID id, Map<String, Object> attributes,
+            String callerEmail) {
+        Restaurant restaurant = scope.ownedRestaurant(id, callerEmail);
         restaurant.setAttributes(attributes);
         return RestaurantResponse.from(restaurantRepository.save(restaurant));
     }

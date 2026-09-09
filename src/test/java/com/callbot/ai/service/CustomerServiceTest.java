@@ -3,6 +3,7 @@ package com.callbot.ai.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -22,7 +23,7 @@ import com.callbot.ai.dto.CustomerResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.model.Customer;
 import com.callbot.ai.repository.CustomerRepository;
-import com.callbot.ai.repository.RestaurantRepository;
+import com.callbot.ai.security.OrganizationScope;
 
 @ExtendWith(MockitoExtension.class)
 class CustomerServiceTest {
@@ -30,9 +31,11 @@ class CustomerServiceTest {
     @Mock
     private CustomerRepository customerRepository;
     @Mock
-    private RestaurantRepository restaurantRepository;
+    private OrganizationScope scope;
     @InjectMocks
     private CustomerService customerService;
+
+    private static final String CALLER = "owner@resto.fr";
 
     private final UUID restaurantId = UUID.randomUUID();
 
@@ -43,12 +46,12 @@ class CustomerServiceTest {
 
     @Test
     void create_whenRestaurantExists_saves() {
-        when(restaurantRepository.existsById(restaurantId)).thenReturn(true);
+        
         when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "+33600000000"))
                 .thenReturn(Optional.empty());
         when(customerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        CustomerResponse response = customerService.create(request());
+        CustomerResponse response = customerService.create(request(), CALLER);
 
         assertThat(response.phone()).isEqualTo("+33600000000");
         assertThat(response.firstName()).isEqualTo("Alice");
@@ -63,12 +66,12 @@ class CustomerServiceTest {
                 .phone("+33600000000")
                 .firstName("Alice")
                 .build();
-        when(restaurantRepository.existsById(restaurantId)).thenReturn(true);
+        
         when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "+33600000000"))
                 .thenReturn(Optional.of(existing));
         when(customerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        CustomerResponse response = customerService.create(request());
+        CustomerResponse response = customerService.create(request(), CALLER);
 
         // Meme fiche reutilisee (pas de nouveau customer -> pas de violation d'unicite).
         assertThat(response.id()).isEqualTo(existing.getId());
@@ -77,9 +80,10 @@ class CustomerServiceTest {
 
     @Test
     void create_whenRestaurantMissing_throwsAndDoesNotSave() {
-        when(restaurantRepository.existsById(restaurantId)).thenReturn(false);
+        doThrow(new ResourceNotFoundException("Restaurant", restaurantId))
+                .when(scope).requireOwnedRestaurant(restaurantId, CALLER);
 
-        assertThatThrownBy(() -> customerService.create(request()))
+        assertThatThrownBy(() -> customerService.create(request(), CALLER))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(customerRepository, never()).save(any());
     }
@@ -89,16 +93,16 @@ class CustomerServiceTest {
         UUID id = UUID.randomUUID();
         when(customerRepository.findById(id)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> customerService.get(id))
+        assertThatThrownBy(() -> customerService.get(id, CALLER))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
     @Test
     void delete_whenMissing_throwsAndDoesNotDelete() {
         UUID id = UUID.randomUUID();
-        when(customerRepository.existsById(id)).thenReturn(false);
+        when(customerRepository.findById(id)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> customerService.delete(id))
+        assertThatThrownBy(() -> customerService.delete(id, CALLER))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(customerRepository, never()).deleteById(any());
     }
@@ -107,7 +111,7 @@ class CustomerServiceTest {
     void list_withRestaurantId_filters() {
         when(customerRepository.findByRestaurantId(restaurantId)).thenReturn(List.of());
 
-        customerService.list(restaurantId);
+        customerService.list(restaurantId, CALLER);
 
         verify(customerRepository).findByRestaurantId(restaurantId);
         verify(customerRepository, never()).findAll();
