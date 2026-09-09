@@ -37,6 +37,7 @@ public class StripeConnectWebhookParser {
     private static final String CHECKOUT_COMPLETED = "checkout.session.completed";
     private static final String ACCOUNT_UPDATED = "account.updated";
     private static final String DISPUTE_CREATED = "charge.dispute.created";
+    private static final String SETUP_MODE = "setup";
 
     private final StripeConnectProperties properties;
 
@@ -59,23 +60,32 @@ public class StripeConnectWebhookParser {
         }
 
         return switch (event.getType()) {
-            case CHECKOUT_COMPLETED -> reservationPaid(event);
+            case CHECKOUT_COMPLETED -> checkoutCompleted(event);
             case ACCOUNT_UPDATED -> accountUpdated(event);
             case DISPUTE_CREATED -> disputeOpened(event);
             default -> Optional.empty();
         };
     }
 
-    private Optional<ConnectWebhookEvent> reservationPaid(Event event) {
+    /**
+     * A completed checkout is either a booking fee that was paid, or a card that was
+     * registered without being charged. Stripe distinguishes them by the session mode.
+     */
+    private Optional<ConnectWebhookEvent> checkoutCompleted(Event event) {
         return event.getDataObjectDeserializer().getObject()
                 .filter(Session.class::isInstance)
                 .map(Session.class::cast)
                 .flatMap(session -> reservationIdOf(session)
-                        .map(id -> new ConnectWebhookEvent.ReservationPaid(
-                                id,
-                                session.getId(),
-                                session.getPaymentIntent(),
-                                session.getAmountTotal() == null ? 0 : session.getAmountTotal().intValue())));
+                        .map(id -> SETUP_MODE.equals(session.getMode())
+                                ? new ConnectWebhookEvent.CardRegistered(
+                                        id, session.getSetupIntent(), event.getAccount())
+                                : new ConnectWebhookEvent.ReservationPaid(
+                                        id,
+                                        session.getId(),
+                                        session.getPaymentIntent(),
+                                        session.getAmountTotal() == null
+                                                ? 0
+                                                : session.getAmountTotal().intValue())));
     }
 
     /**

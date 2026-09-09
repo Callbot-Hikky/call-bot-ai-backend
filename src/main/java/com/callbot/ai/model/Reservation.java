@@ -140,6 +140,37 @@ public class Reservation {
     @Column(name = "payout_id")
     private UUID payoutId;
 
+    /** Card registered for a no-show guarantee, held on the restaurant's own Stripe account. */
+    @Column(name = "stripe_customer_id")
+    private String stripeCustomerId;
+
+    @Column(name = "stripe_payment_method_id")
+    private String stripePaymentMethodId;
+
+    @Column(name = "stripe_setup_intent_id")
+    private String stripeSetupIntentId;
+
+    @Column(name = "payment_method_detached_at")
+    private OffsetDateTime paymentMethodDetachedAt;
+
+    /** When staff recorded the absence. Always a person, never the system's silence. */
+    @Column(name = "no_show_recorded_at")
+    private OffsetDateTime noShowRecordedAt;
+
+    @Column(name = "no_show_recorded_by")
+    private UUID noShowRecordedBy;
+
+    /** End of the window in which staff may take the absence back before anyone is charged. */
+    @Column(name = "penalty_due_at")
+    private OffsetDateTime penaltyDueAt;
+
+    @Builder.Default
+    @Column(name = "penalty_attempts", nullable = false)
+    private int penaltyAttempts = 0;
+
+    @Column(name = "penalty_charged_at")
+    private OffsetDateTime penaltyChargedAt;
+
     @PrePersist
     void onCreate() {
         OffsetDateTime now = OffsetDateTime.now();

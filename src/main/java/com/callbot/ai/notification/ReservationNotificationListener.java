@@ -113,6 +113,27 @@ public class ReservationNotificationListener {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+    public void onPenaltyCharged(ReservationPenaltyChargedEvent event) {
+        contextFor(event.reservationId(), "penalty charged").ifPresent(context -> {
+            discord.sendClientSmsMessage(templates.forClientPenaltyCharged(
+                    context.reservation(), context.customer(), context.restaurant()));
+            discord.sendReservationMessage(templates.forRestaurantPenaltyCharged(
+                    context.reservation(), context.customer(), context.restaurant()));
+        });
+    }
+
+    /** Only the restaurateur hears about a failed debit; the diner was never charged. */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+    public void onPenaltyAbandoned(ReservationPenaltyAbandonedEvent event) {
+        contextFor(event.reservationId(), "penalty abandoned").ifPresent(context ->
+                discord.sendReservationMessage(templates.forRestaurantPenaltyAbandoned(
+                        context.reservation(), context.customer(), context.restaurant(),
+                        event.reason())));
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public void onReservationUpdated(ReservationUpdatedEvent event) {
         contextFor(event.reservationId(), "updated").ifPresent(context -> {
             discord.sendClientSmsMessage(templates.forClientUpdated(

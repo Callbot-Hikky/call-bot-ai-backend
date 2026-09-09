@@ -24,6 +24,18 @@ public sealed interface ConnectWebhookEvent {
     }
 
     /**
+     * A diner registered a card for a no-show guarantee. Nothing was charged.
+     *
+     * <p>Carries the connected account because the setup session was created there, and
+     * the card can only be read back — and later debited — from that same account.
+     */
+    record CardRegistered(
+            UUID reservationId,
+            String setupIntentId,
+            String connectedAccountId) implements ConnectWebhookEvent {
+    }
+
+    /**
      * A diner disputed their booking fee with their bank.
      *
      * <p>Carries the payment intent rather than a reservation id: a dispute object has no
