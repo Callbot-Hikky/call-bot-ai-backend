@@ -46,7 +46,7 @@ public class GuaranteeSettingsService {
 
         requireAmountFor(mode, request);
         if (mode.requiresGuarantee()) {
-            connectAccount.requireAbleToCharge(restaurant.getOrganizationId());
+            connectAccount.requireAbleToCharge(restaurant.getId());
         }
 
         restaurant.setGuaranteeMode(mode.code());

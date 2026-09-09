@@ -258,10 +258,10 @@ class NoShowGuaranteeIntegrationTest extends AbstractIntegrationTest {
         when(connect.createOnboardingLink(account)).thenReturn("https://connect.stripe.com/setup/1");
         when(connect.fetchStatus(account)).thenReturn(new ConnectAccountStatus(account, true, true, true));
 
-        mockMvc.perform(post("/api/billing/connect/onboarding")
+        mockMvc.perform(post("/api/restaurants/" + restaurantId + "/payment-account/onboarding")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk());
-        mockMvc.perform(post("/api/billing/connect/refresh")
+        mockMvc.perform(post("/api/restaurants/" + restaurantId + "/payment-account/refresh")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk());
     }

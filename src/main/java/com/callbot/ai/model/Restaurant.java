@@ -87,6 +87,40 @@ public class Restaurant {
     @Column(nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> attributes = new HashMap<>();
 
+    /**
+     * Stripe connected account collecting this restaurant's guarantees.
+     *
+     * <p>Held per restaurant, not per organization: a Stripe account is tied to a legal
+     * entity and a bank account, and two establishments of one owner are often two
+     * companies. Sharing one would send the second's money to the first's bank.
+     */
+    @Column(name = "stripe_account_id")
+    private String stripeAccountId;
+
+    /** Stripe lets this account take payments; a paying guarantee mode needs it. */
+    @Builder.Default
+    @Column(name = "stripe_charges_enabled", nullable = false)
+    private boolean stripeChargesEnabled = false;
+
+    @Builder.Default
+    @Column(name = "stripe_payouts_enabled", nullable = false)
+    private boolean stripePayoutsEnabled = false;
+
+    @Builder.Default
+    @Column(name = "stripe_details_submitted", nullable = false)
+    private boolean stripeDetailsSubmitted = false;
+
+    @Column(name = "stripe_onboarded_at")
+    private OffsetDateTime stripeOnboardedAt;
+
+    /** Bank disputes on this restaurant's booking fees, absorbed by Alloquence. */
+    @Builder.Default
+    @Column(name = "stripe_dispute_count", nullable = false)
+    private int stripeDisputeCount = 0;
+
+    @Column(name = "stripe_last_dispute_at")
+    private OffsetDateTime stripeLastDisputeAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 

@@ -14,21 +14,23 @@ import com.callbot.ai.exception.InvalidRequestException;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.gateway.stripe.ConnectAccountStatus;
 import com.callbot.ai.gateway.stripe.StripeConnectGateway;
-import com.callbot.ai.model.Organization;
+import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.model.User;
-import com.callbot.ai.repository.OrganizationRepository;
 import com.callbot.ai.repository.ReservationRepository;
+import com.callbot.ai.repository.RestaurantRepository;
 import com.callbot.ai.repository.UserRepository;
-import com.callbot.ai.security.CallerOrganizationResolver;
+import com.callbot.ai.security.OrganizationScope;
 
 import lombok.RequiredArgsConstructor;
 
 /**
- * The restaurateur's payment account: opening it, and knowing what it may do.
+ * A restaurant's payment account: opening it, and knowing what it may do.
  *
- * <p>An organization holds one connected account, not each restaurant: a group running
- * several restaurants banks once. The account is what makes a paying guarantee mode
- * possible at all, so {@link #requireAbleToCharge} is the gate every paying flow passes.
+ * <p>One account per restaurant, not per owner. A Stripe account is tied to a legal
+ * entity and a bank account, and two establishments of the same owner are often two
+ * companies banking separately — one shared account would pay the wrong one.
+ *
+ * <p>{@link #requireAbleToCharge} is the gate every paying flow passes.
  */
 @Service
 @Transactional
@@ -37,15 +39,15 @@ public class ConnectAccountService {
 
     private static final Logger log = LoggerFactory.getLogger(ConnectAccountService.class);
 
-    private final OrganizationRepository organizationRepository;
-    private final UserRepository userRepository;
-    private final CallerOrganizationResolver callerOrganization;
+    private final RestaurantRepository restaurantRepository;
     private final ReservationRepository reservationRepository;
+    private final UserRepository userRepository;
+    private final OrganizationScope scope;
     private final StripeConnectGateway connect;
 
     @Transactional(readOnly = true)
-    public ConnectAccountResponse status(String callerEmail) {
-        return describe(callerOrganizationOrFail(callerEmail));
+    public ConnectAccountResponse status(UUID restaurantId, String callerEmail) {
+        return describe(scope.ownedRestaurant(restaurantId, callerEmail));
     }
 
     /**
@@ -54,77 +56,84 @@ public class ConnectAccountService {
      * <p>Stripe's links expire within minutes, so this is called again every time the
      * restaurateur clicks — never cached.
      */
-    public ConnectOnboardingResponse startOnboarding(String callerEmail) {
-        Organization organization = callerOrganizationOrFail(callerEmail);
+    public ConnectOnboardingResponse startOnboarding(UUID restaurantId, String callerEmail) {
+        Restaurant restaurant = scope.ownedRestaurant(restaurantId, callerEmail);
+        requireSignedIn(callerEmail);
 
-        if (organization.getStripeAccountId() == null) {
+        if (restaurant.getStripeAccountId() == null) {
             String email = userRepository.findByEmail(callerEmail).map(User::getEmail).orElse(null);
-            organization.setStripeAccountId(
-                    connect.createConnectedAccount(email, organization.getName()));
-            organizationRepository.save(organization);
+            restaurant.setStripeAccountId(
+                    connect.createConnectedAccount(email, restaurant.getName()));
+            restaurantRepository.save(restaurant);
         }
 
-        return new ConnectOnboardingResponse(connect.createOnboardingLink(organization.getStripeAccountId()));
+        return new ConnectOnboardingResponse(connect.createOnboardingLink(restaurant.getStripeAccountId()));
     }
 
     /**
-     * Records what Stripe now allows. Called from the webhook, and again whenever the
-     * back-office asks — a restaurateur returning from onboarding should not have to
-     * wait on a webhook to see their account unlocked.
+     * Asks Stripe what the account may now do, so a restaurateur returning from
+     * onboarding sees it unlocked without waiting on a webhook.
      */
+    public ConnectAccountResponse refresh(UUID restaurantId, String callerEmail) {
+        Restaurant restaurant = scope.ownedRestaurant(restaurantId, callerEmail);
+        if (restaurant.getStripeAccountId() == null) {
+            return describe(restaurant);
+        }
+        save(restaurant, connect.fetchStatus(restaurant.getStripeAccountId()));
+        return describe(restaurant);
+    }
+
+    /** Records what Stripe now allows. Called from the webhook. */
     public void apply(ConnectAccountStatus status) {
-        organizationRepository.findByStripeAccountId(status.accountId())
+        restaurantRepository.findByStripeAccountId(status.accountId())
                 .ifPresentOrElse(
-                        organization -> save(organization, status),
-                        () -> log.warn("Stripe account {} belongs to no organization", status.accountId()));
-    }
-
-    public ConnectAccountResponse refresh(String callerEmail) {
-        Organization organization = callerOrganizationOrFail(callerEmail);
-        if (organization.getStripeAccountId() == null) {
-            return describe(organization);
-        }
-        save(organization, connect.fetchStatus(organization.getStripeAccountId()));
-        return describe(organization);
+                        restaurant -> save(restaurant, status),
+                        () -> log.warn("Stripe account {} belongs to no restaurant", status.accountId()));
     }
 
     /**
-     * Refuses anything that would take a diner's money through an account Stripe has
-     * not cleared: the diner would reach a payment page that fails, having already been
-     * told their table is held.
+     * Refuses anything that would take a diner's money through an account Stripe has not
+     * cleared: the diner would reach a payment page that fails, having already been told
+     * their table is held.
      */
-    public void requireAbleToCharge(UUID organizationId) {
-        Organization organization = organizationRepository.findById(organizationId)
-                .orElseThrow(() -> new ResourceNotFoundException("Organization", organizationId));
-        if (!organization.isStripeChargesEnabled()) {
+    public void requireAbleToCharge(UUID restaurantId) {
+        Restaurant restaurant = restaurantRepository.findById(restaurantId)
+                .orElseThrow(() -> new ResourceNotFoundException("Restaurant", restaurantId));
+        if (!restaurant.isStripeChargesEnabled()) {
             throw new InvalidRequestException(
-                    "Le compte de paiement n'est pas encore validé par Stripe : "
+                    "Le compte de paiement de ce restaurant n'est pas encore validé par Stripe : "
                             + "terminez l'inscription avant d'activer un mode payant.");
         }
     }
 
-    private void save(Organization organization, ConnectAccountStatus status) {
-        boolean wasBlocked = !organization.isStripeChargesEnabled();
-        organization.setStripeChargesEnabled(status.chargesEnabled());
-        organization.setStripePayoutsEnabled(status.payoutsEnabled());
-        organization.setStripeDetailsSubmitted(status.detailsSubmitted());
+    /** Records a bank dispute against the restaurant whose fee was contested. */
+    public void recordDispute(Restaurant restaurant) {
+        restaurant.setStripeDisputeCount(restaurant.getStripeDisputeCount() + 1);
+        restaurant.setStripeLastDisputeAt(OffsetDateTime.now());
+        restaurantRepository.save(restaurant);
+    }
+
+    private void save(Restaurant restaurant, ConnectAccountStatus status) {
+        boolean wasBlocked = !restaurant.isStripeChargesEnabled();
+        restaurant.setStripeChargesEnabled(status.chargesEnabled());
+        restaurant.setStripePayoutsEnabled(status.payoutsEnabled());
+        restaurant.setStripeDetailsSubmitted(status.detailsSubmitted());
         if (wasBlocked && status.chargesEnabled()) {
-            organization.setStripeOnboardedAt(OffsetDateTime.now());
+            restaurant.setStripeOnboardedAt(OffsetDateTime.now());
         }
-        organizationRepository.save(organization);
+        restaurantRepository.save(restaurant);
     }
 
     /** The dispute count is only meaningful next to how many fees were actually taken. */
-    private ConnectAccountResponse describe(Organization organization) {
-        return ConnectAccountResponse.from(organization,
-                reservationRepository.countPaidFor(organization.getId()));
+    private ConnectAccountResponse describe(Restaurant restaurant) {
+        return ConnectAccountResponse.from(restaurant,
+                reservationRepository.countPaidFor(restaurant.getId()));
     }
 
-    private Organization callerOrganizationOrFail(String callerEmail) {
-        UUID organizationId = callerOrganization.resolve(callerEmail)
-                .orElseThrow(() -> new InvalidRequestException(
-                        "Seul un utilisateur signé peut gérer un compte de paiement"));
-        return organizationRepository.findById(organizationId)
-                .orElseThrow(() -> new ResourceNotFoundException("Organization", organizationId));
+    private void requireSignedIn(String callerEmail) {
+        if (scope.organizationOf(callerEmail).isEmpty()) {
+            throw new InvalidRequestException(
+                    "Seul un utilisateur signé peut ouvrir un compte de paiement");
+        }
     }
 }

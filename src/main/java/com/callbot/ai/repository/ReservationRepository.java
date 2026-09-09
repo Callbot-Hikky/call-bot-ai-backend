@@ -38,35 +38,32 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
             @Param("deadline") OffsetDateTime deadline);
 
     /**
-     * Organizations holding money that is due to leave for their bank.
+     * Restaurants holding money that is due to leave for their bank.
      *
-     * <p>Reservations carry a restaurant, restaurants carry an organization, and the
-     * payout is made per connected account — hence the join. Refunded reservations are
+     * <p>Each restaurant is paid on its own connected account. Refunded reservations are
      * excluded: that money went back to the diner.
      */
     @Query("""
-            SELECT DISTINCT s.organizationId FROM Reservation r, Restaurant s
-            WHERE r.restaurantId = s.id
-              AND r.paidAt IS NOT NULL
+            SELECT DISTINCT r.restaurantId FROM Reservation r
+            WHERE r.paidAt IS NOT NULL
               AND r.paidOutAt IS NULL
               AND r.refundedAt IS NULL
               AND r.payoutEligibleAt < :now
             """)
-    List<UUID> findOrganizationsWithDuePayouts(@Param("now") OffsetDateTime now);
+    List<UUID> findRestaurantsWithDuePayouts(@Param("now") OffsetDateTime now);
 
-    /** The reservations making up one organization's due payout, locked while it is built. */
+    /** The reservations making up one restaurant's due payout, locked while it is built. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
     @Query("""
-            SELECT r FROM Reservation r, Restaurant s
-            WHERE r.restaurantId = s.id
-              AND s.organizationId = :organizationId
+            SELECT r FROM Reservation r
+            WHERE r.restaurantId = :restaurantId
               AND r.paidAt IS NOT NULL
               AND r.paidOutAt IS NULL
               AND r.refundedAt IS NULL
               AND r.payoutEligibleAt < :now
             """)
-    List<Reservation> lockDuePayoutsFor(@Param("organizationId") UUID organizationId,
+    List<Reservation> lockDuePayoutsFor(@Param("restaurantId") UUID restaurantId,
             @Param("now") OffsetDateTime now);
 
     /** The reservations a payout claimed, so a refused transfer can release them. */
@@ -105,14 +102,13 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
     List<Reservation> findCardsToDetach(@Param("before") OffsetDateTime before,
             @Param("maxAttempts") int maxAttempts);
 
-    /** Denominator of an organization's dispute rate. */
+    /** Denominator of a restaurant's dispute rate. */
     @Query("""
-            SELECT COUNT(r) FROM Reservation r, Restaurant s
-            WHERE r.restaurantId = s.id
-              AND s.organizationId = :organizationId
+            SELECT COUNT(r) FROM Reservation r
+            WHERE r.restaurantId = :restaurantId
               AND r.paidAt IS NOT NULL
             """)
-    long countPaidFor(@Param("organizationId") UUID organizationId);
+    long countPaidFor(@Param("restaurantId") UUID restaurantId);
 
     Optional<Reservation> findByPaymentToken(String paymentToken);
 

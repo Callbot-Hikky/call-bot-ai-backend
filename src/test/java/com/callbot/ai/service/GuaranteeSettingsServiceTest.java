@@ -58,7 +58,7 @@ class GuaranteeSettingsServiceTest {
         when(callerOrganization.resolve(OWNER)).thenReturn(Optional.of(organizationId));
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
         doThrow(new InvalidRequestException("compte non validé"))
-                .when(connectAccount).requireAbleToCharge(organizationId);
+                .when(connectAccount).requireAbleToCharge(restaurantId);
 
         assertThatThrownBy(() -> service.update(restaurantId,
                 new GuaranteeSettingsRequest("booking_fee", 1500, null, 24), OWNER))

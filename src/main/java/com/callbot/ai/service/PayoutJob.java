@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 
 import com.callbot.ai.exception.PaymentGatewayException;
 import com.callbot.ai.gateway.stripe.StripeConnectGateway;
-import com.callbot.ai.model.Organization;
+import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.model.Payout;
 
 import lombok.RequiredArgsConstructor;
@@ -48,7 +48,7 @@ public class PayoutJob {
     public void payOutDue() {
         OffsetDateTime now = OffsetDateTime.now();
         int sent = 0;
-        for (UUID organizationId : payouts.organizationsWithMoneyDue(now)) {
+        for (UUID organizationId : payouts.restaurantsWithMoneyDue(now)) {
             try {
                 sent += payOut(organizationId, now);
             } catch (RuntimeException e) {
@@ -61,27 +61,27 @@ public class PayoutJob {
         }
     }
 
-    /** @return how many transfers Stripe accepted for this organization */
-    int payOut(UUID organizationId, OffsetDateTime now) {
-        Organization organization = payouts.payableOrganization(organizationId).orElse(null);
-        if (organization == null) {
-            log.warn("Organization {} has money due but no account able to receive it", organizationId);
+    /** @return how many transfers Stripe accepted for this restaurant */
+    int payOut(UUID restaurantId, OffsetDateTime now) {
+        Restaurant restaurant = payouts.payableRestaurant(restaurantId).orElse(null);
+        if (restaurant == null) {
+            log.warn("Restaurant {} has money due but no account able to receive it", restaurantId);
             return 0;
         }
 
         int sent = 0;
-        for (Payout claimed : payouts.claim(organizationId, now)) {
-            if (send(organization, claimed)) {
+        for (Payout claimed : payouts.claim(restaurantId, now)) {
+            if (send(restaurant, claimed)) {
                 sent++;
             }
         }
         return sent;
     }
 
-    private boolean send(Organization organization, Payout payout) {
+    private boolean send(Restaurant restaurant, Payout payout) {
         try {
             String stripePayoutId = connect.payOut(
-                    organization.getStripeAccountId(),
+                    restaurant.getStripeAccountId(),
                     payout.getAmountCents(),
                     payout.getCurrency(),
                     payout.getId().toString());
@@ -90,9 +90,9 @@ public class PayoutJob {
         } catch (PaymentGatewayException e) {
             // Usually a balance Stripe has not made available yet. Settling with a
             // failure is what releases the reservations for the next sweep.
-            log.warn("Payout {} of {} {} to organization {} failed: {}",
+            log.warn("Payout {} of {} {} to restaurant {} failed: {}",
                     payout.getId(), payout.getAmountCents(), payout.getCurrency(),
-                    organization.getId(), e.getMessage());
+                    restaurant.getId(), e.getMessage());
             payouts.settle(payout.getId(), null, e.getMessage());
             return false;
         }
