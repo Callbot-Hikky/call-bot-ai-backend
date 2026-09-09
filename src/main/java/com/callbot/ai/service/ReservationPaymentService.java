@@ -2,6 +2,7 @@ package com.callbot.ai.service;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 import org.slf4j.Logger;
@@ -21,16 +22,20 @@ import com.callbot.ai.gateway.stripe.CardRegistration;
 import com.callbot.ai.gateway.stripe.RegisteredCard;
 import com.callbot.ai.gateway.stripe.ConnectWebhookEvent;
 import com.callbot.ai.gateway.stripe.StripeConnectGateway;
+import com.callbot.ai.model.ChargeKind;
+import com.callbot.ai.model.ChargeStatus;
 import com.callbot.ai.model.Commission;
 import com.callbot.ai.model.Customer;
 import com.callbot.ai.model.GuaranteeMode;
 import com.callbot.ai.model.GuaranteeStatus;
 import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.ReservationCharge;
 import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.notification.ReservationCancelledByGuestEvent;
 import com.callbot.ai.notification.ReservationConfirmedEvent;
 import com.callbot.ai.repository.CustomerRepository;
+import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 
@@ -58,6 +63,7 @@ public class ReservationPaymentService {
     static final Duration PAYOUT_DELAY_AFTER_SERVICE = Duration.ofDays(1);
 
     private final ReservationRepository reservationRepository;
+    private final ReservationChargeRepository charges;
     private final RestaurantRepository restaurantRepository;
     private final CustomerRepository customerRepository;
     private final StripeConnectGateway connect;
@@ -92,25 +98,36 @@ public class ReservationPaymentService {
         requireAwaitingGuarantee(reservation);
         connectAccount.requireAbleToCharge(restaurant.getId());
 
-        CheckoutSession session = GuaranteeMode.NO_SHOW.code().equals(reservation.getGuaranteeMode())
-                ? registerCard(reservation, restaurant)
-                : collectBookingFee(reservation, restaurant);
-
-        reservation.setStripeSessionId(session.id());
-        reservationRepository.save(reservation);
-
-        return new PaymentRedirectResponse(session.url());
+        if (GuaranteeMode.NO_SHOW.code().equals(reservation.getGuaranteeMode())) {
+            return new PaymentRedirectResponse(registerCard(reservation, restaurant).url());
+        }
+        return new PaymentRedirectResponse(collectBookingFee(reservation, restaurant).url());
     }
 
+    /**
+     * Opens, or reopens, the one charge that stands for this reservation's booking fee.
+     *
+     * <p>Reopened rather than added to: a diner who came back to the link is settling the
+     * same debt, and a second row would claim they owe twice. The row is only created
+     * once, and carries the session Stripe is holding for it.
+     */
     private CheckoutSession collectBookingFee(Reservation reservation, Restaurant restaurant) {
         int amountCents = reservation.getGuaranteeAmountCents();
         Commission commission = Commission.on(amountCents);
-        reservation.setApplicationFeeCents(commission.amountCents());
+
+        ReservationCharge charge = charges
+                .findByReservationIdAndKindAndStatus(
+                        reservation.getId(), ChargeKind.BOOKING_FEE, ChargeStatus.PENDING)
+                .orElseGet(() -> ReservationCharge.builder()
+                        .reservationId(reservation.getId())
+                        .kind(ChargeKind.BOOKING_FEE)
+                        .status(ChargeStatus.PENDING)
+                        .build());
 
         // Only one session may be payable at a time.
-        connect.expireCheckout(reservation.getStripeSessionId());
+        connect.expireCheckout(charge.getStripeSessionId());
 
-        return connect.createBookingFeeCheckout(new BookingFeeCharge(
+        CheckoutSession session = connect.createBookingFeeCheckout(new BookingFeeCharge(
                 reservation.getId(),
                 restaurant.getName(),
                 amountCents,
@@ -118,6 +135,14 @@ public class ReservationPaymentService {
                 commission.amountCents(),
                 restaurant.getStripeAccountId(),
                 emailOf(reservation)));
+
+        charge.setAmountCents(amountCents);
+        charge.setApplicationFeeCents(commission.amountCents());
+        charge.setCurrency(reservation.getCurrency());
+        charge.setStripeSessionId(session.id());
+        charges.save(charge);
+
+        return session;
     }
 
     /**
@@ -194,17 +219,43 @@ public class ReservationPaymentService {
             return;
         }
 
+        settleBookingFee(reservation, paid.paymentIntentId());
+
         reservation.setStatus(ReservationStatus.CONFIRMED);
         reservation.setGuaranteeStatus(GuaranteeStatus.SECURED);
-        reservation.setPaidAt(OffsetDateTime.now());
-        reservation.setStripePaymentIntentId(paid.paymentIntentId());
-        reservation.setPayoutEligibleAt(reservation.getEndsAt().plus(PAYOUT_DELAY_AFTER_SERVICE));
         // Single use: the link must not reopen a checkout for a reservation already paid.
         reservation.setPaymentToken(null);
         reservation.setGuaranteeExpiresAt(null);
         reservationRepository.save(reservation);
 
         events.publishEvent(new ReservationConfirmedEvent(reservation.getId()));
+    }
+
+    /**
+     * Closes the pending booking-fee charge, or writes one if the checkout never opened
+     * through us — money that arrived is money that belongs in the register either way.
+     */
+    private void settleBookingFee(Reservation reservation, String paymentIntentId) {
+        int amountCents = reservation.getGuaranteeAmountCents() == null
+                ? 0
+                : reservation.getGuaranteeAmountCents();
+
+        ReservationCharge charge = charges
+                .findByReservationIdAndKindAndStatus(
+                        reservation.getId(), ChargeKind.BOOKING_FEE, ChargeStatus.PENDING)
+                .orElseGet(() -> ReservationCharge.builder()
+                        .reservationId(reservation.getId())
+                        .kind(ChargeKind.BOOKING_FEE)
+                        .amountCents(amountCents)
+                        .applicationFeeCents(Commission.on(amountCents).amountCents())
+                        .currency(reservation.getCurrency())
+                        .build());
+
+        charge.setStatus(ChargeStatus.PAID);
+        charge.setPaidAt(OffsetDateTime.now());
+        charge.setStripePaymentIntentId(paymentIntentId);
+        charge.setPayoutEligibleAt(reservation.getEndsAt().plus(PAYOUT_DELAY_AFTER_SERVICE));
+        charges.save(charge);
     }
 
     /**
@@ -215,8 +266,21 @@ public class ReservationPaymentService {
      * their fees is a risk worth seeing coming rather than discovering on a statement.
      */
     public void recordDispute(ConnectWebhookEvent.DisputeOpened dispute) {
-        Reservation reservation = reservationRepository
+        ReservationCharge charge = charges
                 .findByStripePaymentIntentId(dispute.paymentIntentId()).orElse(null);
+        if (charge == null) {
+            log.warn("Dispute on payment {} matches no charge", dispute.paymentIntentId());
+            return;
+        }
+        if (!charge.isBookingFee()) {
+            // A contested no-show penalty is not a loss Alloquence absorbs, having taken
+            // no commission on it. It is the restaurateur's to argue.
+            log.warn("Dispute of {} cents on penalty {} is not counted against the restaurant",
+                    dispute.amountCents(), charge.getId());
+            return;
+        }
+        Reservation reservation = reservationRepository
+                .findById(charge.getReservationId()).orElse(null);
         if (reservation == null) {
             log.warn("Dispute on payment {} matches no reservation", dispute.paymentIntentId());
             return;
@@ -236,12 +300,16 @@ public class ReservationPaymentService {
      * sessions were open at once — and the second one goes straight back.
      */
     private void refundDuplicate(Reservation reservation, ConnectWebhookEvent.ReservationPaid paid) {
-        String alreadyPaid = reservation.getStripePaymentIntentId();
-        if (paid.paymentIntentId() == null || paid.paymentIntentId().equals(alreadyPaid)) {
+        if (paid.paymentIntentId() == null) {
             return;
         }
-        log.error("Reservation {} was paid twice ({} and {}); refunding the second payment",
-                reservation.getId(), alreadyPaid, paid.paymentIntentId());
+        boolean alreadyInRegister = charges.findByReservationId(reservation.getId()).stream()
+                .anyMatch(charge -> paid.paymentIntentId().equals(charge.getStripePaymentIntentId()));
+        if (alreadyInRegister) {
+            return;
+        }
+        log.error("Reservation {} was paid twice; refunding payment {}",
+                reservation.getId(), paid.paymentIntentId());
         connect.refundFully(paid.paymentIntentId(), "duplicate-" + paid.paymentIntentId());
     }
 
@@ -256,20 +324,12 @@ public class ReservationPaymentService {
         Reservation reservation = byCancellationToken(cancellationToken);
 
         if (ReservationStatus.CANCELLED.equals(reservation.getStatus())) {
-            return new CancellationResponse(true, reservation.getRefundedAt() != null,
-                    reservation.getRefundedAmountCents());
+            int alreadyRefunded = refundedTotalOf(reservation);
+            return new CancellationResponse(true, alreadyRefunded > 0, alreadyRefunded);
         }
         requireStillCancellable(reservation);
 
-        boolean refundable = isRefundable(reservation);
-        if (refundable) {
-            // Keyed on the reservation: a retry cannot refund the same fee twice.
-            connect.refundFully(reservation.getStripePaymentIntentId(),
-                    "refund-" + reservation.getId());
-            reservation.setGuaranteeStatus(GuaranteeStatus.REFUNDED);
-            reservation.setRefundedAt(OffsetDateTime.now());
-            reservation.setRefundedAmountCents(reservation.getGuaranteeAmountCents());
-        }
+        int refunded = isRefundable(reservation) ? refundEverythingPaid(reservation) : 0;
 
         reservation.setStatus(ReservationStatus.CANCELLED);
         reservation.setCancelledAt(OffsetDateTime.now());
@@ -277,9 +337,50 @@ public class ReservationPaymentService {
         reservation.setGuaranteeExpiresAt(null);
         reservationRepository.save(reservation);
 
-        events.publishEvent(new ReservationCancelledByGuestEvent(reservation.getId(), refundable));
+        events.publishEvent(
+                new ReservationCancelledByGuestEvent(reservation.getId(), refunded > 0, refunded));
 
-        return new CancellationResponse(true, refundable, reservation.getRefundedAmountCents());
+        return new CancellationResponse(true, refunded > 0, refunded);
+    }
+
+    /**
+     * Gives back every charge settled on this reservation, and reports the total.
+     *
+     * <p>Every one of them, because a party that grew paid twice: refunding only the
+     * booking fee would keep the top-up for a table nobody will sit at. Each refund is
+     * keyed on its own charge, so a retry cannot give the same money back twice.
+     */
+    private int refundEverythingPaid(Reservation reservation) {
+        List<ReservationCharge> paid = charges
+                .findByReservationIdAndStatus(reservation.getId(), ChargeStatus.PAID);
+        if (paid.isEmpty()) {
+            return 0;
+        }
+
+        OffsetDateTime now = OffsetDateTime.now();
+        int total = 0;
+        for (ReservationCharge charge : paid) {
+            connect.refundFully(charge.getStripePaymentIntentId(), "refund-" + charge.getId());
+            charge.setStatus(ChargeStatus.REFUNDED);
+            charge.setRefundedAt(now);
+            charge.setRefundedAmountCents(charge.getAmountCents());
+            // Refunded money never leaves for the restaurateur's bank.
+            charge.setPayoutEligibleAt(null);
+            total += charge.getAmountCents();
+        }
+        charges.saveAll(paid);
+        reservation.setGuaranteeStatus(GuaranteeStatus.REFUNDED);
+
+        return total;
+    }
+
+    private int refundedTotalOf(Reservation reservation) {
+        return charges.findByReservationIdAndStatus(reservation.getId(), ChargeStatus.REFUNDED)
+                .stream()
+                .mapToInt(charge -> charge.getRefundedAmountCents() == null
+                        ? 0
+                        : charge.getRefundedAmountCents())
+                .sum();
     }
 
     /**
@@ -303,8 +404,7 @@ public class ReservationPaymentService {
      * blunt that while inviting an argument over the fraction.
      */
     private boolean isRefundable(Reservation reservation) {
-        if (!GuaranteeStatus.SECURED.equals(reservation.getGuaranteeStatus())
-                || reservation.getStripePaymentIntentId() == null) {
+        if (!GuaranteeStatus.SECURED.equals(reservation.getGuaranteeStatus())) {
             return false;
         }
         if (!GuaranteeMode.BOOKING_FEE.code().equals(reservation.getGuaranteeMode())) {

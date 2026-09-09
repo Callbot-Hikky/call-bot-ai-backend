@@ -18,20 +18,22 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.callbot.ai.model.ChargeKind;
+import com.callbot.ai.model.ChargeStatus;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.model.Payout;
 import com.callbot.ai.model.PayoutStatus;
-import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.ReservationCharge;
 import com.callbot.ai.repository.RestaurantRepository;
 import com.callbot.ai.repository.PayoutRepository;
-import com.callbot.ai.repository.ReservationRepository;
+import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.security.OrganizationScope;
 
 @ExtendWith(MockitoExtension.class)
 class PayoutServiceTest {
 
     @Mock
-    private ReservationRepository reservationRepository;
+    private ReservationChargeRepository charges;
     @Mock
     private RestaurantRepository restaurantRepository;
     @Mock
@@ -43,10 +45,18 @@ class PayoutServiceTest {
 
     private final UUID restaurantId = UUID.randomUUID();
 
-    private Reservation paid(int amountCents, int feeCents, String currency) {
-        return Reservation.builder()
+    private ReservationCharge paid(int amountCents, int feeCents, String currency) {
+        return paid(amountCents, feeCents, currency, UUID.randomUUID());
+    }
+
+    private ReservationCharge paid(int amountCents, int feeCents, String currency,
+            UUID reservationId) {
+        return ReservationCharge.builder()
                 .id(UUID.randomUUID())
-                .guaranteeAmountCents(amountCents)
+                .reservationId(reservationId)
+                .kind(ChargeKind.BOOKING_FEE)
+                .status(ChargeStatus.PAID)
+                .amountCents(amountCents)
                 .applicationFeeCents(feeCents)
                 .currency(currency)
                 .paidAt(OffsetDateTime.now().minusDays(3))
@@ -67,8 +77,9 @@ class PayoutServiceTest {
     @Test
     void claimsWhatIsLeftAfterTheCommission() {
         payoutsAreSaved();
-        List<Reservation> due = List.of(paid(9000, 500, "eur"), paid(3000, 200, "eur"));
-        when(reservationRepository.lockDuePayoutsFor(eq(restaurantId), any())).thenReturn(due);
+        List<ReservationCharge> due = List.of(paid(9000, 500, "eur"), paid(3000, 200, "eur"));
+        when(charges.lockDuePayoutsFor(eq(restaurantId), eq(ChargeStatus.PAID), any()))
+                .thenReturn(due);
 
         List<Payout> claimed = service.claim(restaurantId, OffsetDateTime.now());
 
@@ -78,16 +89,16 @@ class PayoutServiceTest {
             assertThat(payout.getStatus()).isEqualTo(PayoutStatus.PENDING);
         });
         // Claiming is what stops a second instance paying the same fees.
-        assertThat(due).allSatisfy(reservation -> {
-            assertThat(reservation.getPaidOutAt()).isNotNull();
-            assertThat(reservation.getPayoutId()).isNotNull();
+        assertThat(due).allSatisfy(charge -> {
+            assertThat(charge.getPaidOutAt()).isNotNull();
+            assertThat(charge.getPayoutId()).isNotNull();
         });
     }
 
     @Test
     void neverMixesCurrenciesIntoOneTransfer() {
         payoutsAreSaved();
-        when(reservationRepository.lockDuePayoutsFor(eq(restaurantId), any()))
+        when(charges.lockDuePayoutsFor(eq(restaurantId), eq(ChargeStatus.PAID), any()))
                 .thenReturn(List.of(paid(9000, 500, "eur"), paid(2000, 150, "chf")));
 
         List<Payout> claimed = service.claim(restaurantId, OffsetDateTime.now());
@@ -98,8 +109,9 @@ class PayoutServiceTest {
     }
 
     @Test
-    void reservationsTakenByAnotherInstanceLeaveNothingToClaim() {
-        when(reservationRepository.lockDuePayoutsFor(eq(restaurantId), any())).thenReturn(List.of());
+    void chargesTakenByAnotherInstanceLeaveNothingToClaim() {
+        when(charges.lockDuePayoutsFor(eq(restaurantId), eq(ChargeStatus.PAID), any()))
+                .thenReturn(List.of());
 
         assertThat(service.claim(restaurantId, OffsetDateTime.now())).isEmpty();
 
@@ -116,18 +128,18 @@ class PayoutServiceTest {
 
         assertThat(payout.getStatus()).isEqualTo(PayoutStatus.PAID);
         assertThat(payout.getStripePayoutId()).isEqualTo("po_1");
-        verify(reservationRepository, never()).findByPayoutId(any());
+        verify(charges, never()).findByPayoutId(any());
     }
 
     @Test
-    void settlingAFailureHandsTheReservationsBackToTheNextSweep() {
+    void settlingAFailureHandsTheChargesBackToTheNextSweep() {
         UUID payoutId = UUID.randomUUID();
         Payout payout = Payout.builder().id(payoutId).amountCents(8500).build();
-        Reservation claimed = paid(9000, 500, "eur");
+        ReservationCharge claimed = paid(9000, 500, "eur");
         claimed.setPaidOutAt(OffsetDateTime.now());
         claimed.setPayoutId(payoutId);
         when(payoutRepository.findById(payoutId)).thenReturn(Optional.of(payout));
-        when(reservationRepository.findByPayoutId(payoutId)).thenReturn(List.of(claimed));
+        when(charges.findByPayoutId(payoutId)).thenReturn(List.of(claimed));
 
         service.settle(payoutId, null, "balance not yet available");
 
@@ -135,6 +147,23 @@ class PayoutServiceTest {
         assertThat(payout.getFailureMessage()).isEqualTo("balance not yet available");
         assertThat(claimed.getPaidOutAt()).isNull();
         assertThat(claimed.getPayoutId()).isNull();
+    }
+
+    /** The register's whole point: one reservation may owe the restaurateur twice. */
+    @Test
+    void twoChargesOnOneReservationBothPayOutButCountAsOneReservation() {
+        payoutsAreSaved();
+        UUID reservationId = UUID.randomUUID();
+        when(charges.lockDuePayoutsFor(eq(restaurantId), eq(ChargeStatus.PAID), any()))
+                .thenReturn(List.of(paid(9000, 500, "eur", reservationId),
+                        paid(3000, 200, "eur", reservationId)));
+
+        List<Payout> claimed = service.claim(restaurantId, OffsetDateTime.now());
+
+        assertThat(claimed).singleElement().satisfies(payout -> {
+            assertThat(payout.getAmountCents()).isEqualTo(8500 + 2800);
+            assertThat(payout.getReservationCount()).isEqualTo(1);
+        });
     }
 
     @Test

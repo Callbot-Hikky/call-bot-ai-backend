@@ -18,10 +18,13 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.callbot.ai.exception.InvalidRequestException;
+import com.callbot.ai.model.ChargeKind;
+import com.callbot.ai.model.ChargeStatus;
 import com.callbot.ai.model.GuaranteeMode;
 import com.callbot.ai.model.GuaranteeStatus;
 import com.callbot.ai.model.Reservation;
 import com.callbot.ai.model.ReservationStatus;
+import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.security.OrganizationScope;
 
@@ -30,6 +33,8 @@ class NoShowServiceTest {
 
     @Mock
     private ReservationRepository reservationRepository;
+    @Mock
+    private ReservationChargeRepository charges;
     @Mock
     private OrganizationScope scope;
     @InjectMocks
@@ -72,7 +77,8 @@ class NoShowServiceTest {
 
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.NO_SHOW);
         assertThat(reservation.getNoShowRecordedBy()).isEqualTo(staffId);
-        assertThat(reservation.getPenaltyChargedAt()).isNull();
+        // Nothing is taken yet: the register stays empty until the window closes.
+        verify(charges, never()).save(any());
         assertThat(reservation.getPenaltyDueAt())
                 .isAfter(before.plus(NoShowService.CANCELLATION_WINDOW).minusMinutes(1));
     }
@@ -212,8 +218,9 @@ class NoShowServiceTest {
         reservation.setStatus(ReservationStatus.NO_SHOW);
         reservation.setNoShowRecordedAt(OffsetDateTime.now().minusHours(4));
         reservation.setNoShowRecordedBy(staffId);
-        reservation.setPenaltyChargedAt(OffsetDateTime.now().minusHours(1));
         when(reservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
+        when(charges.existsByReservationIdAndKindAndStatus(
+                reservationId, ChargeKind.NO_SHOW_PENALTY, ChargeStatus.PAID)).thenReturn(true);
 
         // Undoing would leave the diner charged for a reservation the system says they honoured.
         assertThatThrownBy(() -> service.undo(reservationId, STAFF))

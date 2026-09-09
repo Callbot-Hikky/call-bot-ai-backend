@@ -94,12 +94,30 @@ plus une somme fixe.
 Ne s'applique **jamais aux pénalités no-show** : celles-ci dédommagent un restaurateur
 d'une table perdue, et en prélever une part serait facturer le malheur d'autrui.
 
+## Encaissement
+
+Un mouvement d'argent sur une réservation : ce qui a été demandé, ce qui est entré, ce
+qui est ressorti, et le reversement qui l'a emporté. Il porte son montant, sa commission,
+son identifiant Stripe et son statut — *en attente*, *réglé*, *remboursé*.
+
+Une réservation en porte **zéro, un ou plusieurs**. Zéro quand elle ne doit rien ; un
+pour des frais de réservation ou une pénalité no-show ; plusieurs dès qu'une tablée
+grandit et que le complément est réglé à part. C'est le **registre** : l'argent
+n'appartient pas à la réservation, il y est rattaché.
+
+Un remboursement rend **chaque** encaissement réglé, jamais seulement le premier. Un
+litige bancaire retrouve la réservation par l'encaissement, jamais l'inverse.
+
 ## Reversement
 
-Envoi vers la banque du restaurateur des frais encaissés, net de la commission.
+Envoi vers la banque du restaurateur des **encaissements** réglés, net de la commission.
 
 N'a lieu qu'**un jour après le service**, jamais avant : un client qui annule dans sa
 fenêtre de remboursement doit pouvoir être remboursé sur une somme qui n'est pas partie.
+
+Il groupe des encaissements et non des réservations : un même reversement peut donc
+contenir deux lignes venant de la même réservation. Le nombre de réservations qu'il
+annonce reste un nombre de réservations, comptées une fois chacune.
 
 ## Lien du client
 

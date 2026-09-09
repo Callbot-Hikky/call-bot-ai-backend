@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -26,14 +27,18 @@ import com.callbot.ai.gateway.CheckoutSession;
 import com.callbot.ai.gateway.stripe.BookingFeeCharge;
 import com.callbot.ai.gateway.stripe.ConnectWebhookEvent;
 import com.callbot.ai.gateway.stripe.StripeConnectGateway;
+import com.callbot.ai.model.ChargeKind;
+import com.callbot.ai.model.ChargeStatus;
 import com.callbot.ai.model.GuaranteeMode;
 import com.callbot.ai.model.GuaranteeStatus;
 import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.ReservationCharge;
 import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.notification.ReservationCancelledByGuestEvent;
 import com.callbot.ai.notification.ReservationConfirmedEvent;
 import com.callbot.ai.repository.CustomerRepository;
+import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 
@@ -42,6 +47,8 @@ class ReservationPaymentServiceTest {
 
     @Mock
     private ReservationRepository reservationRepository;
+    @Mock
+    private ReservationChargeRepository charges;
     @Mock
     private RestaurantRepository restaurantRepository;
     @Mock
@@ -82,6 +89,27 @@ class ReservationPaymentServiceTest {
                 .build();
     }
 
+    /** Captures the charge the service wrote to the register. */
+    private ReservationCharge savedCharge() {
+        ArgumentCaptor<ReservationCharge> captor = ArgumentCaptor.forClass(ReservationCharge.class);
+        verify(charges).save(captor.capture());
+        return captor.getValue();
+    }
+
+    private ReservationCharge settledBookingFee(String paymentIntentId) {
+        return ReservationCharge.builder()
+                .id(UUID.randomUUID())
+                .reservationId(reservationId)
+                .kind(ChargeKind.BOOKING_FEE)
+                .status(ChargeStatus.PAID)
+                .amountCents(9000)
+                .applicationFeeCents(500)
+                .currency("eur")
+                .stripePaymentIntentId(paymentIntentId)
+                .paidAt(OffsetDateTime.now())
+                .build();
+    }
+
     private void restaurantExists() {
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(
                 Restaurant.builder().id(restaurantId).name("Chez Payant")
@@ -112,8 +140,12 @@ class ReservationPaymentServiceTest {
         assertThat(charge.getValue().applicationFeeCents()).isEqualTo(500);
         assertThat(charge.getValue().connectedAccountId()).isEqualTo(ACCOUNT);
         assertThat(charge.getValue().reservationId()).isEqualTo(reservationId);
-        assertThat(reservation.getStripeSessionId()).isEqualTo("cs_1");
-        assertThat(reservation.getApplicationFeeCents()).isEqualTo(500);
+        ReservationCharge opened = savedCharge();
+        assertThat(opened.getStripeSessionId()).isEqualTo("cs_1");
+        assertThat(opened.getApplicationFeeCents()).isEqualTo(500);
+        assertThat(opened.getAmountCents()).isEqualTo(9000);
+        assertThat(opened.getKind()).isEqualTo(ChargeKind.BOOKING_FEE);
+        assertThat(opened.getStatus()).isEqualTo(ChargeStatus.PENDING);
     }
 
     @Test
@@ -150,9 +182,13 @@ class ReservationPaymentServiceTest {
 
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
         assertThat(reservation.getGuaranteeStatus()).isEqualTo(GuaranteeStatus.SECURED);
-        assertThat(reservation.getStripePaymentIntentId()).isEqualTo("pi_1");
-        assertThat(reservation.getPaidAt()).isNotNull();
-        assertThat(reservation.getPayoutEligibleAt()).isEqualTo(reservation.getEndsAt().plusDays(1));
+        ReservationCharge settled = savedCharge();
+        assertThat(settled.getStatus()).isEqualTo(ChargeStatus.PAID);
+        assertThat(settled.getStripePaymentIntentId()).isEqualTo("pi_1");
+        assertThat(settled.getAmountCents()).isEqualTo(9000);
+        assertThat(settled.getApplicationFeeCents()).isEqualTo(500);
+        assertThat(settled.getPaidAt()).isNotNull();
+        assertThat(settled.getPayoutEligibleAt()).isEqualTo(reservation.getEndsAt().plusDays(1));
         // Single use: the link must not reopen a checkout for a table already paid for.
         assertThat(reservation.getPaymentToken()).isNull();
         verify(events).publishEvent(new ReservationConfirmedEvent(reservationId));
@@ -162,14 +198,16 @@ class ReservationPaymentServiceTest {
     void aWebhookDeliveredTwiceConfirmsOnlyOnce() {
         Reservation reservation = awaitingPayment();
         reservation.setGuaranteeStatus(GuaranteeStatus.SECURED);
-        reservation.setStripePaymentIntentId("pi_1");
         when(reservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
+        when(charges.findByReservationId(reservationId))
+                .thenReturn(List.of(settledBookingFee("pi_1")));
 
         // Same payment intent: Stripe redelivering, not a second payment.
         service.markPaid(new ConnectWebhookEvent.ReservationPaid(reservationId, "cs_1", "pi_1", 9000));
 
         verify(events, never()).publishEvent(any(ReservationConfirmedEvent.class));
         verify(reservationRepository, never()).save(any());
+        verify(charges, never()).save(any());
         verify(connect, never()).refundFully(anyString(), anyString());
     }
 
@@ -189,8 +227,11 @@ class ReservationPaymentServiceTest {
     @Test
     void cancellingWellBeforeTheServiceGivesEveryCentBack() {
         Reservation reservation = paidReservationStartingIn(72);
+        ReservationCharge refundedCharge = settledBookingFee("pi_1");
         when(reservationRepository.findByCancellationToken(CANCELLATION_TOKEN))
                 .thenReturn(Optional.of(reservation));
+        when(charges.findByReservationIdAndStatus(reservationId, ChargeStatus.PAID))
+                .thenReturn(List.of(refundedCharge));
 
         CancellationResponse response = service.cancelByToken(CANCELLATION_TOKEN);
 
@@ -198,8 +239,9 @@ class ReservationPaymentServiceTest {
         assertThat(response.refundedAmountCents()).isEqualTo(9000);
         assertThat(reservation.getGuaranteeStatus()).isEqualTo(GuaranteeStatus.REFUNDED);
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CANCELLED);
-        verify(connect).refundFully("pi_1", "refund-" + reservationId);
-        verify(events).publishEvent(new ReservationCancelledByGuestEvent(reservationId, true));
+        verify(connect).refundFully("pi_1", "refund-" + refundedCharge.getId());
+        verify(events).publishEvent(
+                new ReservationCancelledByGuestEvent(reservationId, true, 9000));
     }
 
     @Test
@@ -214,7 +256,8 @@ class ReservationPaymentServiceTest {
         assertThat(response.refunded()).isFalse();
         assertThat(reservation.getGuaranteeStatus()).isEqualTo(GuaranteeStatus.SECURED);
         verify(connect, never()).refundFully(anyString(), anyString());
-        verify(events).publishEvent(new ReservationCancelledByGuestEvent(reservationId, false));
+        verify(events).publishEvent(
+                new ReservationCancelledByGuestEvent(reservationId, false, 0));
     }
 
     @Test
@@ -225,6 +268,8 @@ class ReservationPaymentServiceTest {
         reservation.setGuaranteeRefundWindowHours(24);
         when(reservationRepository.findByCancellationToken(CANCELLATION_TOKEN))
                 .thenReturn(Optional.of(reservation));
+        when(charges.findByReservationIdAndStatus(reservationId, ChargeStatus.PAID))
+                .thenReturn(List.of(settledBookingFee("pi_1")));
 
         assertThat(service.cancelByToken(CANCELLATION_TOKEN).refunded()).isTrue();
     }
@@ -232,8 +277,19 @@ class ReservationPaymentServiceTest {
     @Test
     void aSecondSessionCannotBeOpenedWithoutClosingTheFirst() {
         Reservation reservation = awaitingPayment();
-        reservation.setStripeSessionId("cs_old");
+        ReservationCharge open = ReservationCharge.builder()
+                .id(UUID.randomUUID())
+                .reservationId(reservationId)
+                .kind(ChargeKind.BOOKING_FEE)
+                .status(ChargeStatus.PENDING)
+                .amountCents(9000)
+                .currency("eur")
+                .stripeSessionId("cs_old")
+                .build();
         when(reservationRepository.findByPaymentToken(PAYMENT_TOKEN)).thenReturn(Optional.of(reservation));
+        when(charges.findByReservationIdAndKindAndStatus(
+                reservationId, ChargeKind.BOOKING_FEE, ChargeStatus.PENDING))
+                .thenReturn(Optional.of(open));
         restaurantWithAPaymentAccount();
         when(connect.createBookingFeeCheckout(any()))
                 .thenReturn(new CheckoutSession("cs_new", "https://checkout.stripe.com/cs_new"));
@@ -242,20 +298,25 @@ class ReservationPaymentServiceTest {
 
         // Two payable sessions would mean two possible payments for one table.
         verify(connect).expireCheckout("cs_old");
-        assertThat(reservation.getStripeSessionId()).isEqualTo("cs_new");
+        // Reopened, not added to: the diner still owes exactly one booking fee.
+        assertThat(savedCharge().getId()).isEqualTo(open.getId());
+        assertThat(open.getStripeSessionId()).isEqualTo("cs_new");
     }
 
     @Test
     void aGenuineSecondPaymentIsGivenBackRatherThanSilentlyKept() {
         Reservation reservation = awaitingPayment();
         reservation.setGuaranteeStatus(GuaranteeStatus.SECURED);
-        reservation.setStripePaymentIntentId("pi_first");
+        ReservationCharge first = settledBookingFee("pi_first");
         when(reservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
+        when(charges.findByReservationId(reservationId)).thenReturn(List.of(first));
 
         service.markPaid(new ConnectWebhookEvent.ReservationPaid(reservationId, "cs_2", "pi_second", 9000));
 
         verify(connect).refundFully("pi_second", "duplicate-pi_second");
-        assertThat(reservation.getStripePaymentIntentId()).isEqualTo("pi_first");
+        // The register keeps the payment that actually stands.
+        assertThat(first.getStripePaymentIntentId()).isEqualTo("pi_first");
+        verify(charges, never()).save(any());
     }
 
     @Test
@@ -279,10 +340,14 @@ class ReservationPaymentServiceTest {
     void cancellingTwiceDoesNotRefundTwice() {
         Reservation reservation = paidReservationStartingIn(72);
         reservation.setStatus(ReservationStatus.CANCELLED);
-        reservation.setRefundedAt(OffsetDateTime.now());
-        reservation.setRefundedAmountCents(9000);
+        ReservationCharge given = settledBookingFee("pi_1");
+        given.setStatus(ChargeStatus.REFUNDED);
+        given.setRefundedAt(OffsetDateTime.now());
+        given.setRefundedAmountCents(9000);
         when(reservationRepository.findByCancellationToken(CANCELLATION_TOKEN))
                 .thenReturn(Optional.of(reservation));
+        when(charges.findByReservationIdAndStatus(reservationId, ChargeStatus.REFUNDED))
+                .thenReturn(List.of(given));
 
         CancellationResponse response = service.cancelByToken(CANCELLATION_TOKEN);
 
@@ -295,7 +360,6 @@ class ReservationPaymentServiceTest {
         Reservation reservation = awaitingPayment();
         reservation.setStatus(ReservationStatus.CONFIRMED);
         reservation.setGuaranteeStatus(GuaranteeStatus.SECURED);
-        reservation.setStripePaymentIntentId("pi_1");
         reservation.setStartsAt(OffsetDateTime.now().plusHours(hours));
         reservation.setEndsAt(OffsetDateTime.now().plusHours(hours + 2));
         return reservation;

@@ -2,6 +2,7 @@ package com.callbot.ai.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -12,17 +13,22 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 
+import com.callbot.ai.model.ChargeKind;
+import com.callbot.ai.model.ChargeStatus;
 import com.callbot.ai.model.GuaranteeStatus;
 import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.ReservationCharge;
 import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.notification.ReservationPenaltyAbandonedEvent;
 import com.callbot.ai.notification.ReservationPenaltyChargedEvent;
 import com.callbot.ai.repository.OrganizationRepository;
+import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 
@@ -31,6 +37,8 @@ class NoShowPenaltyServiceTest {
 
     @Mock
     private ReservationRepository reservationRepository;
+    @Mock
+    private ReservationChargeRepository charges;
     @Mock
     private RestaurantRepository restaurantRepository;
     @Mock
@@ -72,24 +80,31 @@ class NoShowPenaltyServiceTest {
         service.settleCharged(reservationId, "pi_1");
 
         assertThat(reservation.getGuaranteeStatus()).isEqualTo(GuaranteeStatus.CHARGED);
-        assertThat(reservation.getPenaltyChargedAt()).isNotNull();
         assertThat(reservation.getPenaltyDueAt()).isNull();
         // Counted once, at claim time — never twice.
         assertThat(reservation.getPenaltyAttempts()).isZero();
+
+        ArgumentCaptor<ReservationCharge> captor = ArgumentCaptor.forClass(ReservationCharge.class);
+        verify(charges).save(captor.capture());
+        ReservationCharge penalty = captor.getValue();
+        // A penalty is an entry in the register like any other, told apart by its kind.
+        assertThat(penalty.getKind()).isEqualTo(ChargeKind.NO_SHOW_PENALTY);
+        assertThat(penalty.getStatus()).isEqualTo(ChargeStatus.PAID);
+        assertThat(penalty.getAmountCents()).isEqualTo(10000);
+        assertThat(penalty.getPaidAt()).isNotNull();
         // A penalty compensates a lost table; Alloquence takes no share of it.
-        assertThat(reservation.getApplicationFeeCents()).isZero();
+        assertThat(penalty.getApplicationFeeCents()).isZero();
         // Same payout rule as a booking fee: a day after the service, not at once.
-        assertThat(reservation.getPayoutEligibleAt()).isEqualTo(reservation.getEndsAt().plusDays(1));
-        // Kept apart from the booking-fee intent, which is what bank disputes look up.
-        assertThat(reservation.getStripePenaltyIntentId()).isEqualTo("pi_1");
-        assertThat(reservation.getStripePaymentIntentId()).isNull();
+        assertThat(penalty.getPayoutEligibleAt()).isEqualTo(reservation.getEndsAt().plusDays(1));
+        assertThat(penalty.getStripePaymentIntentId()).isEqualTo("pi_1");
         verify(events).publishEvent(new ReservationPenaltyChargedEvent(reservationId));
     }
 
     @Test
     void claimingCommitsTheOwnershipSoNoOtherInstanceCanDebitTheSameCard() {
         Reservation reservation = awaitingPenalty(0);
-        when(reservationRepository.lockDuePenalties(any(), org.mockito.ArgumentMatchers.anyInt()))
+        when(reservationRepository.lockDuePenalties(any(), org.mockito.ArgumentMatchers.anyInt(),
+                eq(ChargeKind.NO_SHOW_PENALTY), eq(ChargeStatus.PAID)))
                 .thenReturn(java.util.List.of(reservation));
         when(reservationRepository.saveAll(any())).thenAnswer(i -> i.getArgument(0));
 
@@ -155,7 +170,7 @@ class NoShowPenaltyServiceTest {
 
         // The money left, but the system must not restate that the diner was absent.
         assertThat(reservation.getGuaranteeStatus()).isEqualTo(GuaranteeStatus.SECURED);
-        assertThat(reservation.getPenaltyChargedAt()).isNull();
+        verify(charges, never()).save(any());
         verify(events, never()).publishEvent(any(ReservationPenaltyChargedEvent.class));
     }
 

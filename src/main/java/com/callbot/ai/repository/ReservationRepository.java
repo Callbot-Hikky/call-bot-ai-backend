@@ -37,40 +37,8 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
     List<Reservation> lockExpiredHolds(@Param("status") String status,
             @Param("deadline") OffsetDateTime deadline);
 
-    /**
-     * Restaurants holding money that is due to leave for their bank.
-     *
-     * <p>Each restaurant is paid on its own connected account. Refunded reservations are
-     * excluded: that money went back to the diner.
-     */
-    @Query("""
-            SELECT DISTINCT r.restaurantId FROM Reservation r
-            WHERE r.paidAt IS NOT NULL
-              AND r.paidOutAt IS NULL
-              AND r.refundedAt IS NULL
-              AND r.payoutEligibleAt < :now
-            """)
-    List<UUID> findRestaurantsWithDuePayouts(@Param("now") OffsetDateTime now);
-
-    /** The reservations making up one restaurant's due payout, locked while it is built. */
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
-    @Query("""
-            SELECT r FROM Reservation r
-            WHERE r.restaurantId = :restaurantId
-              AND r.paidAt IS NOT NULL
-              AND r.paidOutAt IS NULL
-              AND r.refundedAt IS NULL
-              AND r.payoutEligibleAt < :now
-            """)
-    List<Reservation> lockDuePayoutsFor(@Param("restaurantId") UUID restaurantId,
-            @Param("now") OffsetDateTime now);
-
-    /** The reservations a payout claimed, so a refused transfer can release them. */
-    List<Reservation> findByPayoutId(UUID payoutId);
-
-    /** The reservation a bank dispute refers to; a dispute carries no metadata of ours. */
-    Optional<Reservation> findByStripePaymentIntentId(String stripePaymentIntentId);
+    // Payouts and disputes read the charge register, not the reservation:
+    // see ReservationChargeRepository.
 
     /**
      * Penalties whose cancellation window has closed and which are still unpaid.
@@ -84,11 +52,16 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
             SELECT r FROM Reservation r
             WHERE r.penaltyDueAt IS NOT NULL
               AND r.penaltyDueAt < :now
-              AND r.penaltyChargedAt IS NULL
               AND r.penaltyAttempts < :maxAttempts
+              AND NOT EXISTS (SELECT 1 FROM ReservationCharge c
+                              WHERE c.reservationId = r.id
+                                AND c.kind = :penaltyKind
+                                AND c.status = :paid)
             """)
     List<Reservation> lockDuePenalties(@Param("now") OffsetDateTime now,
-            @Param("maxAttempts") int maxAttempts);
+            @Param("maxAttempts") int maxAttempts,
+            @Param("penaltyKind") String penaltyKind,
+            @Param("paid") String paid);
 
     /** Cards still held for services that are over and can no longer produce a debit. */
     @Query("""
@@ -96,19 +69,17 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
             WHERE r.stripePaymentMethodId IS NOT NULL
               AND r.paymentMethodDetachedAt IS NULL
               AND r.endsAt < :before
-              AND (r.penaltyDueAt IS NULL OR r.penaltyChargedAt IS NOT NULL
-                   OR r.penaltyAttempts >= :maxAttempts)
+              AND (r.penaltyDueAt IS NULL
+                   OR r.penaltyAttempts >= :maxAttempts
+                   OR EXISTS (SELECT 1 FROM ReservationCharge c
+                              WHERE c.reservationId = r.id
+                                AND c.kind = :penaltyKind
+                                AND c.status = :paid))
             """)
     List<Reservation> findCardsToDetach(@Param("before") OffsetDateTime before,
-            @Param("maxAttempts") int maxAttempts);
-
-    /** Denominator of a restaurant's dispute rate. */
-    @Query("""
-            SELECT COUNT(r) FROM Reservation r
-            WHERE r.restaurantId = :restaurantId
-              AND r.paidAt IS NOT NULL
-            """)
-    long countPaidFor(@Param("restaurantId") UUID restaurantId);
+            @Param("maxAttempts") int maxAttempts,
+            @Param("penaltyKind") String penaltyKind,
+            @Param("paid") String paid);
 
     Optional<Reservation> findByPaymentToken(String paymentToken);
 
