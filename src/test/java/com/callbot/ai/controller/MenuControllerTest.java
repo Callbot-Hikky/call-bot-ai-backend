@@ -2,13 +2,14 @@ package com.callbot.ai.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -31,6 +32,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.callbot.ai.dto.MenuLimits;
 import com.callbot.ai.dto.MenuResponse;
 import com.callbot.ai.exception.MenuFileException;
+import com.callbot.ai.model.RestaurantMenuFile;
 import com.callbot.ai.security.JwtAuthenticationFilter;
 import com.callbot.ai.security.RestaurantAccess;
 import com.callbot.ai.security.ServiceApiKeyFilter;
@@ -121,15 +123,21 @@ class MenuControllerTest {
     }
 
     @Test
-    void upload_overTenMegabytes_returns413BeforeReadingTheFile() throws Exception {
+    void file_returnsBytesForOwnerWithoutCaching() throws Exception {
         UUID restaurantId = UUID.randomUUID();
-        byte[] huge = new byte[10 * 1024 * 1024 + 1];
-        MockMultipartFile file = new MockMultipartFile("file", "carte.pdf", "application/pdf", huge);
+        UUID fileId = UUID.randomUUID();
+        byte[] data = "%PDF-1.7 preview".getBytes();
+        when(menuService.getFile(restaurantId, fileId)).thenReturn(RestaurantMenuFile.builder()
+                .id(fileId).restaurantId(restaurantId).kind("pdf").position(0)
+                .contentType("application/pdf").sizeBytes(data.length).data(data).build());
 
-        mockMvc.perform(multipart("/api/restaurants/{id}/menu/files", restaurantId).file(file))
-                .andExpect(status().isPayloadTooLarge())
-                .andExpect(jsonPath("$.error").value("file_too_large"));
-        verify(menuService, never()).upload(any(), any());
+        mockMvc.perform(get("/api/restaurants/{id}/menu/files/{fileId}", restaurantId, fileId))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "application/pdf"))
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(header().string("ETag", "\"" + fileId + "\""))
+                .andExpect(content().bytes(data));
+        verify(restaurantAccess).requireOwned(eq(restaurantId), any());
     }
 
     @Test

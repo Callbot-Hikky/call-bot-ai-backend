@@ -1,5 +1,6 @@
 package com.callbot.ai.integration;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -99,7 +100,17 @@ class MenuIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.files[0].kind").value("image"))
                 .andExpect(jsonPath("$.files[0].contentType").value("image/png"))
                 .andReturn().getResponse().getContentAsString();
-        String fileUrl = JsonPath.read(menu, "$.files[0].url");
+        String adminUrl = JsonPath.read(menu, "$.files[0].url");
+
+        // Tant que rien n'est publie, l'URL admin sert l'apercu au proprietaire, et le public n'a rien.
+        mockMvc.perform(get(adminUrl).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store"));
+        mockMvc.perform(get(adminUrl))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/public/restaurants/" + restaurantId + "/menu"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.files").isEmpty());
 
         mockMvc.perform(put("/api/restaurants/" + restaurantId + "/menu")
                 .header("Authorization", "Bearer " + token)
@@ -108,11 +119,60 @@ class MenuIntegrationTest extends AbstractIntegrationTest {
                         {"mode":"images"}"""))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(get(fileUrl))
+        String published = mockMvc.perform(get("/api/public/restaurants/" + restaurantId + "/menu"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.files[0].kind").value("image"))
+                .andReturn().getResponse().getContentAsString();
+        String publicUrl = JsonPath.read(published, "$.files[0].url");
+
+        mockMvc.perform(get(publicUrl))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Content-Type", "image/png"))
                 .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(header().exists("ETag"))
                 .andExpect(content().bytes(pngBytes()));
+
+        // Depublier rend le fichier inaccessible au public, meme avec l'URL deja vue.
+        mockMvc.perform(put("/api/restaurants/" + restaurantId + "/menu")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"mode":"none"}"""))
+                .andExpect(status().isOk());
+        mockMvc.perform(get(publicUrl))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void deletingTheLastPublishedFileResetsModeToNone() throws Exception {
+        String token = registerAndGetToken("menu-delete@example.com");
+        String restaurantId = createOwnedRestaurant(token, "Chez Delete", "+33100000109");
+        byte[] pdf = new byte[128];
+        System.arraycopy("%PDF-1.7 ".getBytes(), 0, pdf, 0, 9);
+        String menu = mockMvc.perform(multipart("/api/restaurants/" + restaurantId + "/menu/files")
+                .file(new MockMultipartFile("file", "carte.pdf", "application/pdf", pdf))
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String fileId = JsonPath.read(menu, "$.files[0].id");
+
+        mockMvc.perform(put("/api/restaurants/" + restaurantId + "/menu")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"mode":"pdf"}"""))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mode").value("pdf"));
+
+        mockMvc.perform(delete("/api/restaurants/" + restaurantId + "/menu/files/" + fileId)
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mode").value("none"))
+                .andExpect(jsonPath("$.files").isEmpty());
+
+        mockMvc.perform(get("/api/public/restaurants/" + restaurantId + "/menu"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mode").value("none"));
     }
 
     @Test

@@ -71,7 +71,7 @@ class PublicMenuControllerTest {
         UUID restaurantId = UUID.randomUUID();
         UUID fileId = UUID.randomUUID();
         byte[] data = "%PDF-1.7 fake".getBytes();
-        when(menuService.getFile(restaurantId, fileId)).thenReturn(RestaurantMenuFile.builder()
+        when(menuService.getPublicFile(restaurantId, fileId)).thenReturn(RestaurantMenuFile.builder()
                 .id(fileId).restaurantId(restaurantId).kind("pdf").position(0)
                 .contentType("application/pdf").sizeBytes(data.length).data(data).build());
 
@@ -81,6 +81,7 @@ class PublicMenuControllerTest {
                 .andExpect(header().string("Content-Disposition", "inline"))
                 .andExpect(header().string("X-Content-Type-Options", "nosniff"))
                 .andExpect(header().string("Cache-Control", "max-age=3600, public"))
+                .andExpect(header().string("ETag", "\"" + fileId + "\""))
                 .andExpect(content().bytes(data));
     }
 }

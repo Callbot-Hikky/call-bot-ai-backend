@@ -3,6 +3,7 @@ package com.callbot.ai.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -21,6 +22,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 
 import com.callbot.ai.dto.MenuFileOrderRequest;
+import com.callbot.ai.dto.MenuFileSummary;
 import com.callbot.ai.dto.MenuRequest;
 import com.callbot.ai.dto.MenuResponse;
 import com.callbot.ai.dto.PublicMenuResponse;
@@ -64,15 +66,42 @@ class MenuServiceTest {
         return bytes;
     }
 
+    private MenuFileSummary summary(UUID id, String kind, int position) {
+        UUID rid = restaurantId;
+        return new MenuFileSummary() {
+            public UUID getId() { return id; }
+            public UUID getRestaurantId() { return rid; }
+            public String getKind() { return kind; }
+            public int getPosition() { return position; }
+            public String getContentType() { return kind.equals("pdf") ? "application/pdf" : "image/png"; }
+            public long getSizeBytes() { return 1; }
+        };
+    }
+
+    private RestaurantMenuFile entity(UUID id, String kind) {
+        return RestaurantMenuFile.builder().id(id).restaurantId(restaurantId).kind(kind).position(0)
+                .contentType(kind.equals("pdf") ? "application/pdf" : "image/png").sizeBytes(1).data(new byte[1]).build();
+    }
+
+    private RestaurantMenu menu(String mode, String manual) {
+        return RestaurantMenu.builder().restaurantId(restaurantId).mode(mode).manualContent(manual).build();
+    }
+
     private void restaurantExists() {
         when(restaurantRepository.existsById(restaurantId)).thenReturn(true);
     }
+
+    private void noFiles() {
+        when(fileRepository.findSummariesByRestaurantIdOrderByPositionAscCreatedAtAsc(restaurantId)).thenReturn(List.of());
+    }
+
+    // --- get
 
     @Test
     void get_whenNoMenuYet_returnsModeNoneAndLimits() {
         restaurantExists();
         when(menuRepository.findById(restaurantId)).thenReturn(Optional.empty());
-        when(fileRepository.findByRestaurantIdOrderByPositionAsc(restaurantId)).thenReturn(List.of());
+        noFiles();
 
         MenuResponse response = menuService.get(restaurantId);
 
@@ -89,12 +118,14 @@ class MenuServiceTest {
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
+    // --- upsert
+
     @Test
     void upsert_createsMenuOnFirstSaveAndStoresManualVerbatim() {
         restaurantExists();
         when(menuRepository.findById(restaurantId)).thenReturn(Optional.empty());
         when(menuRepository.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(fileRepository.findByRestaurantIdOrderByPositionAsc(restaurantId)).thenReturn(List.of());
+        noFiles();
 
         MenuResponse response = menuService.upsert(restaurantId, new MenuRequest("manual",
                 objectMapper.readTree("""
@@ -102,26 +133,64 @@ class MenuServiceTest {
 
         assertThat(response.mode()).isEqualTo("manual");
         assertThat(response.manual().get("sections").get(0).get("name").asString()).isEqualTo("Entrees");
+        assertThat(response.files()).isEmpty();
     }
 
     @Test
-    void upsert_withNullManual_storesEmptyObject() {
+    void upsert_withoutManual_keepsExistingHandTypedMenu() {
         restaurantExists();
-        when(menuRepository.findById(restaurantId)).thenReturn(Optional.empty());
+        when(menuRepository.findById(restaurantId)).thenReturn(Optional.of(
+                menu("manual", "{\"version\":1,\"sections\":[{\"name\":\"Plats\",\"items\":[]}]}")));
         when(menuRepository.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(fileRepository.findByRestaurantIdOrderByPositionAsc(restaurantId)).thenReturn(List.of());
+        noFiles();
 
         MenuResponse response = menuService.upsert(restaurantId, new MenuRequest("none", null));
 
-        assertThat(response.manual().isEmpty()).isTrue();
+        assertThat(response.mode()).isEqualTo("none");
+        assertThat(response.manual().get("sections").get(0).get("name").asString()).isEqualTo("Plats");
     }
+
+    @Test
+    void upsert_modeImagesWithoutAnyImage_isRejectedWith409() {
+        restaurantExists();
+        when(menuRepository.findById(restaurantId)).thenReturn(Optional.empty());
+        when(fileRepository.countByRestaurantIdAndKind(restaurantId, "image")).thenReturn(0L);
+
+        assertThatThrownBy(() -> menuService.upsert(restaurantId, new MenuRequest("images", null)))
+                .isInstanceOf(MenuFileException.class)
+                .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT));
+        verify(menuRepository, never()).save(any());
+    }
+
+    @Test
+    void upsert_modeManualWithEmptyContent_isRejectedWith409() {
+        restaurantExists();
+        when(menuRepository.findById(restaurantId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> menuService.upsert(restaurantId, new MenuRequest("manual", objectMapper.readTree("{}"))))
+                .isInstanceOf(MenuFileException.class)
+                .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT));
+        verify(menuRepository, never()).save(any());
+    }
+
+    @Test
+    void upsert_manualThatIsNotAnObject_isRejectedWith400() {
+        restaurantExists();
+
+        assertThatThrownBy(() -> menuService.upsert(restaurantId, new MenuRequest("none", objectMapper.readTree("\"hello\""))))
+                .isInstanceOf(MenuFileException.class)
+                .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
+        verify(menuRepository, never()).save(any());
+    }
+
+    // --- upload
 
     @Test
     void upload_pdf_replacesPreviousPdf() {
         restaurantExists();
         when(fileRepository.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(fileRepository.findByRestaurantIdOrderByPositionAsc(restaurantId)).thenReturn(List.of());
         when(menuRepository.findById(restaurantId)).thenReturn(Optional.empty());
+        noFiles();
 
         menuService.upload(restaurantId, pdf(2048));
 
@@ -130,24 +199,26 @@ class MenuServiceTest {
     }
 
     @Test
-    void upload_image_appendsAtEndOfOrder() {
+    void upload_image_appendsAfterTheLastPosition() {
         restaurantExists();
-        when(fileRepository.countByRestaurantIdAndKind(restaurantId, "image")).thenReturn(2L);
+        when(fileRepository.findSummariesByRestaurantIdOrderByPositionAscCreatedAtAsc(restaurantId))
+                .thenReturn(List.of(summary(UUID.randomUUID(), "image", 0), summary(UUID.randomUUID(), "image", 3)));
         when(fileRepository.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(fileRepository.findByRestaurantIdOrderByPositionAsc(restaurantId)).thenReturn(List.of());
         when(menuRepository.findById(restaurantId)).thenReturn(Optional.empty());
 
         menuService.upload(restaurantId, png());
 
         verify(fileRepository).save(org.mockito.ArgumentMatchers.argThat(
-                f -> f.getKind().equals("image") && f.getPosition() == 2
+                f -> f.getKind().equals("image") && f.getPosition() == 4
                         && f.getContentType().equals("image/png") && f.getSizeBytes() == 64));
     }
 
     @Test
     void upload_ninthImage_isRejectedWith409() {
         restaurantExists();
-        when(fileRepository.countByRestaurantIdAndKind(restaurantId, "image")).thenReturn(8L);
+        when(fileRepository.findSummariesByRestaurantIdOrderByPositionAscCreatedAtAsc(restaurantId))
+                .thenReturn(java.util.stream.IntStream.range(0, 8)
+                        .mapToObj(i -> summary(UUID.randomUUID(), "image", i)).toList());
 
         assertThatThrownBy(() -> menuService.upload(restaurantId, png()))
                 .isInstanceOf(MenuFileException.class)
@@ -175,31 +246,70 @@ class MenuServiceTest {
         verify(fileRepository, never()).save(any());
     }
 
+    // --- deleteFile
+
     @Test
     void deleteFile_whenFileBelongsToAnotherRestaurant_throwsNotFound() {
         restaurantExists();
         UUID fileId = UUID.randomUUID();
-        when(fileRepository.findByIdAndRestaurantId(fileId, restaurantId)).thenReturn(Optional.empty());
+        when(fileRepository.findSummaryByIdAndRestaurantId(fileId, restaurantId)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> menuService.deleteFile(restaurantId, fileId))
                 .isInstanceOf(ResourceNotFoundException.class);
+        verify(fileRepository, never()).deleteByIdAndRestaurantId(any(), any());
     }
+
+    @Test
+    void deleteFile_lastFileOfPublishedMode_resetsModeToNone() {
+        restaurantExists();
+        UUID pdfId = UUID.randomUUID();
+        when(fileRepository.findSummaryByIdAndRestaurantId(pdfId, restaurantId)).thenReturn(Optional.of(summary(pdfId, "pdf", 0)));
+        when(menuRepository.findById(restaurantId)).thenReturn(Optional.of(menu("pdf", "{}")));
+        when(fileRepository.countByRestaurantIdAndKind(restaurantId, "pdf")).thenReturn(0L);
+        when(menuRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        noFiles();
+
+        MenuResponse response = menuService.deleteFile(restaurantId, pdfId);
+
+        verify(fileRepository).deleteByIdAndRestaurantId(pdfId, restaurantId);
+        assertThat(response.mode()).isEqualTo("none");
+    }
+
+    @Test
+    void deleteFile_middleImage_renumbersTheOthersWithoutGap() {
+        restaurantExists();
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+        UUID c = UUID.randomUUID();
+        when(fileRepository.findSummaryByIdAndRestaurantId(b, restaurantId)).thenReturn(Optional.of(summary(b, "image", 1)));
+        when(fileRepository.findSummariesByRestaurantIdOrderByPositionAscCreatedAtAsc(restaurantId))
+                .thenReturn(List.of(summary(a, "image", 0), summary(c, "image", 2)));
+        when(menuRepository.findById(restaurantId)).thenReturn(Optional.of(menu("images", "{}")));
+        when(fileRepository.countByRestaurantIdAndKind(restaurantId, "image")).thenReturn(2L);
+
+        MenuResponse response = menuService.deleteFile(restaurantId, b);
+
+        verify(fileRepository).updatePosition(c, restaurantId, 1);
+        verify(fileRepository, never()).updatePosition(org.mockito.ArgumentMatchers.eq(a), any(), anyInt());
+        assertThat(response.mode()).isEqualTo("images");
+        verify(menuRepository, never()).save(any());
+    }
+
+    // --- reorder
 
     @Test
     void reorder_assignsPositionsInGivenOrder() {
         restaurantExists();
         UUID a = UUID.randomUUID();
         UUID b = UUID.randomUUID();
-        RestaurantMenuFile fileA = RestaurantMenuFile.builder().id(a).restaurantId(restaurantId).kind("image").position(0).contentType("image/png").sizeBytes(1).data(new byte[1]).build();
-        RestaurantMenuFile fileB = RestaurantMenuFile.builder().id(b).restaurantId(restaurantId).kind("image").position(1).contentType("image/png").sizeBytes(1).data(new byte[1]).build();
-        when(fileRepository.findByRestaurantIdOrderByPositionAsc(restaurantId)).thenReturn(List.of(fileA, fileB));
+        when(fileRepository.findSummariesByRestaurantIdOrderByPositionAscCreatedAtAsc(restaurantId))
+                .thenReturn(List.of(summary(a, "image", 0), summary(b, "image", 1)));
         when(menuRepository.findById(restaurantId)).thenReturn(Optional.empty());
 
         menuService.reorder(restaurantId, new MenuFileOrderRequest(List.of(b, a)));
 
-        assertThat(fileB.getPosition()).isEqualTo(0);
-        assertThat(fileA.getPosition()).isEqualTo(1);
-        verify(fileRepository).saveAll(List.of(fileA, fileB));
+        verify(fileRepository).updatePosition(b, restaurantId, 0);
+        verify(fileRepository).updatePosition(a, restaurantId, 1);
     }
 
     @Test
@@ -207,59 +317,28 @@ class MenuServiceTest {
         restaurantExists();
         UUID a = UUID.randomUUID();
         UUID b = UUID.randomUUID();
-        RestaurantMenuFile fileA = RestaurantMenuFile.builder().id(a).restaurantId(restaurantId).kind("image").position(0).contentType("image/png").sizeBytes(1).data(new byte[1]).build();
-        RestaurantMenuFile fileB = RestaurantMenuFile.builder().id(b).restaurantId(restaurantId).kind("image").position(1).contentType("image/png").sizeBytes(1).data(new byte[1]).build();
-        when(fileRepository.findByRestaurantIdOrderByPositionAsc(restaurantId)).thenReturn(List.of(fileA, fileB));
+        when(fileRepository.findSummariesByRestaurantIdOrderByPositionAscCreatedAtAsc(restaurantId))
+                .thenReturn(List.of(summary(a, "image", 0), summary(b, "image", 1)));
 
         assertThatThrownBy(() -> menuService.reorder(restaurantId, new MenuFileOrderRequest(List.of(b))))
                 .isInstanceOf(MenuFileException.class)
                 .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
-        verify(fileRepository, never()).saveAll(any());
+        verify(fileRepository, never()).updatePosition(any(), any(), anyInt());
     }
 
     @Test
     void reorder_unknownId_isRejectedWith400() {
         restaurantExists();
-        UUID a = UUID.randomUUID();
-        RestaurantMenuFile fileA = RestaurantMenuFile.builder().id(a).restaurantId(restaurantId).kind("image").position(0).contentType("image/png").sizeBytes(1).data(new byte[1]).build();
-        when(fileRepository.findByRestaurantIdOrderByPositionAsc(restaurantId)).thenReturn(List.of(fileA));
+        when(fileRepository.findSummariesByRestaurantIdOrderByPositionAscCreatedAtAsc(restaurantId))
+                .thenReturn(List.of(summary(UUID.randomUUID(), "image", 0)));
 
         assertThatThrownBy(() -> menuService.reorder(restaurantId, new MenuFileOrderRequest(List.of(UUID.randomUUID()))))
                 .isInstanceOf(MenuFileException.class)
                 .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
-        verify(fileRepository, never()).saveAll(any());
+        verify(fileRepository, never()).updatePosition(any(), any(), anyInt());
     }
 
-    @Test
-    void upsert_modeImagesWithoutAnyImage_isRejectedWith409() {
-        restaurantExists();
-        when(fileRepository.countByRestaurantIdAndKind(restaurantId, "image")).thenReturn(0L);
-
-        assertThatThrownBy(() -> menuService.upsert(restaurantId, new MenuRequest("images", null)))
-                .isInstanceOf(MenuFileException.class)
-                .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT));
-        verify(menuRepository, never()).save(any());
-    }
-
-    @Test
-    void upsert_modeManualWithEmptyContent_isRejectedWith409() {
-        restaurantExists();
-
-        assertThatThrownBy(() -> menuService.upsert(restaurantId, new MenuRequest("manual", objectMapper.readTree("{}"))))
-                .isInstanceOf(MenuFileException.class)
-                .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT));
-        verify(menuRepository, never()).save(any());
-    }
-
-    @Test
-    void upsert_manualThatIsNotAnObject_isRejectedWith400() {
-        restaurantExists();
-
-        assertThatThrownBy(() -> menuService.upsert(restaurantId, new MenuRequest("none", objectMapper.readTree("\"hello\""))))
-                .isInstanceOf(MenuFileException.class)
-                .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
-        verify(menuRepository, never()).save(any());
-    }
+    // --- files
 
     @Test
     void getFile_whenFileBelongsToAnotherRestaurant_throwsNotFound() {
@@ -271,15 +350,35 @@ class MenuServiceTest {
     }
 
     @Test
+    void getPublicFile_whenFileIsNotOfThePublishedMode_throwsNotFound() {
+        UUID pdfId = UUID.randomUUID();
+        when(fileRepository.findByIdAndRestaurantId(pdfId, restaurantId)).thenReturn(Optional.of(entity(pdfId, "pdf")));
+        when(menuRepository.findById(restaurantId)).thenReturn(Optional.of(menu("images", "{}")));
+
+        assertThatThrownBy(() -> menuService.getPublicFile(restaurantId, pdfId))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void getPublicFile_whenPublished_returnsTheFile() {
+        UUID imageId = UUID.randomUUID();
+        when(fileRepository.findByIdAndRestaurantId(imageId, restaurantId)).thenReturn(Optional.of(entity(imageId, "image")));
+        when(menuRepository.findById(restaurantId)).thenReturn(Optional.of(menu("images", "{}")));
+
+        assertThat(menuService.getPublicFile(restaurantId, imageId).getId()).isEqualTo(imageId);
+    }
+
+    // --- getPublic
+
+    @Test
     void getPublic_exposesOnlyNameModeManualAndCurrentModeFiles() {
         Restaurant restaurant = Restaurant.builder().id(restaurantId).organizationId(UUID.randomUUID())
                 .name("Chez Hikky").phoneNumber("+33100000000").build();
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
-        when(menuRepository.findById(restaurantId)).thenReturn(Optional.of(
-                RestaurantMenu.builder().restaurantId(restaurantId).mode("images").manualContent("{}").build()));
-        RestaurantMenuFile pdfFile = RestaurantMenuFile.builder().id(UUID.randomUUID()).restaurantId(restaurantId).kind("pdf").position(0).contentType("application/pdf").sizeBytes(1).data(new byte[1]).build();
-        RestaurantMenuFile image = RestaurantMenuFile.builder().id(UUID.randomUUID()).restaurantId(restaurantId).kind("image").position(0).contentType("image/png").sizeBytes(1).data(new byte[1]).build();
-        when(fileRepository.findByRestaurantIdOrderByPositionAsc(restaurantId)).thenReturn(List.of(pdfFile, image));
+        when(menuRepository.findById(restaurantId)).thenReturn(Optional.of(menu("images", "{}")));
+        UUID imageId = UUID.randomUUID();
+        when(fileRepository.findSummariesByRestaurantIdOrderByPositionAscCreatedAtAsc(restaurantId))
+                .thenReturn(List.of(summary(UUID.randomUUID(), "pdf", 0), summary(imageId, "image", 0)));
 
         PublicMenuResponse response = menuService.getPublic(restaurantId);
 
@@ -288,7 +387,7 @@ class MenuServiceTest {
         assertThat(response.files()).hasSize(1);
         assertThat(response.files().get(0).kind()).isEqualTo("image");
         assertThat(response.files().get(0).url())
-                .isEqualTo("/api/public/restaurants/" + restaurantId + "/menu/files/" + image.getId());
+                .isEqualTo("/api/public/restaurants/" + restaurantId + "/menu/files/" + imageId);
     }
 
     @Test

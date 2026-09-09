@@ -20,12 +20,6 @@ spring:
     enabled: true
     baseline-on-migrate: true
 
-  servlet:
-    multipart:
-      # Menu : PDF 10 Mo max, image 5 Mo max (verifie aussi par MenuService).
-      max-file-size: 10MB
-      max-request-size: 12MB
-
 server:
   port: ${SERVER_PORT:8080}
 
