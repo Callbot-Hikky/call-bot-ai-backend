@@ -109,6 +109,28 @@ Il en existe deux, distincts :
 - le **lien d'annulation**, qui survit au règlement — c'est justement après avoir payé
   qu'on peut avoir besoin d'annuler.
 
+## Constat d'absence
+
+Acte par lequel un membre du personnel déclare qu'un client n'est pas venu.
+
+Toujours **humain, et attribué**. Le système ne déduit jamais une absence de son propre
+silence : une table que personne n'a marquée est une table qui a été honorée.
+
+Le constat ne débite rien. Il ouvre une **fenêtre d'annulation** de deux heures pendant
+laquelle il peut être repris, ce qui rend inoffensif un constat posé par erreur. Ce n'est
+qu'une fois cette fenêtre fermée que la pénalité devient exigible.
+
+## Carte enregistrée
+
+Moyen de paiement qu'un client confie en garantie no-show, sans qu'aucune somme ne soit
+prélevée au moment de la réservation.
+
+Elle est conservée **sur le compte de paiement du restaurateur**, jamais chez Alloquence :
+c'est lui qui débitera si la table est perdue, et un moyen de paiement enregistré sur un
+compte ne peut pas être utilisé depuis un autre.
+
+Elle est oubliée une fois le service passé et la pénalité réglée ou abandonnée.
+
 ## No-show
 
 Client qui ne se présente pas et n'a pas annulé. C'est un **constat humain**, posé par

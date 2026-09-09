@@ -25,6 +25,7 @@ import com.callbot.ai.dto.ReservationResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.security.JwtAuthenticationFilter;
 import com.callbot.ai.security.ServiceApiKeyFilter;
+import com.callbot.ai.service.NoShowService;
 import com.callbot.ai.service.ReservationService;
 
 @WebMvcTest(controllers = ReservationController.class,
@@ -39,6 +40,8 @@ class ReservationControllerTest {
 
     @MockitoBean
     private ReservationService reservationService;
+    @MockitoBean
+    private NoShowService noShowService;
 
     private ReservationResponse sample() {
         return new ReservationResponse(UUID.randomUUID(), UUID.randomUUID(), null, null, null,

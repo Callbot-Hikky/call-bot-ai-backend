@@ -11,12 +11,17 @@ import com.callbot.ai.gateway.CheckoutSession;
 import com.stripe.StripeClient;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Account;
+import com.stripe.model.Customer;
+import com.stripe.model.PaymentIntent;
+import com.stripe.model.SetupIntent;
 import com.stripe.model.AccountLink;
 import com.stripe.model.Payout;
 import com.stripe.model.Refund;
 import com.stripe.model.checkout.Session;
 import com.stripe.net.RequestOptions;
 import com.stripe.param.AccountCreateParams;
+import com.stripe.param.CustomerCreateParams;
+import com.stripe.param.PaymentIntentCreateParams;
 import com.stripe.param.AccountLinkCreateParams;
 import com.stripe.param.PayoutCreateParams;
 import com.stripe.param.RefundCreateParams;
@@ -234,6 +239,107 @@ public class StripeConnectGateway {
             return payout.getId();
         } catch (StripeException e) {
             throw new PaymentGatewayException("Unable to pay out to the connected account", e);
+        }
+    }
+
+    /**
+     * Hosted page that registers a card <em>without charging it</em>, for the no-show
+     * guarantee.
+     *
+     * <p>Created on the restaurant's own account, not Alloquence's: it is the
+     * restaurateur who will debit the card if the table is wasted, and a payment method
+     * saved on one Stripe account cannot be used from another.
+     */
+    public CheckoutSession createCardRegistration(CardRegistration registration) {
+        requireKey();
+        RequestOptions onRestaurant = options(registration.connectedAccountId(), null);
+        try {
+            Customer customer = client.customers().create(
+                    CustomerCreateParams.builder()
+                            .setEmail(registration.customerEmail())
+                            .setDescription("Garantie no-show — réservation " + registration.reservationId())
+                            .build(),
+                    onRestaurant);
+
+            SessionCreateParams params = SessionCreateParams.builder()
+                    .setMode(SessionCreateParams.Mode.SETUP)
+                    .setCurrency(registration.currency())
+                    .setCustomer(customer.getId())
+                    .setSuccessUrl(connect.successUrl())
+                    .setCancelUrl(connect.cancelUrl())
+                    .putMetadata(RESERVATION_METADATA_KEY, registration.reservationId().toString())
+                    .build();
+
+            Session session = client.checkout().sessions().create(params, onRestaurant);
+            return new CheckoutSession(session.getId(), session.getUrl());
+        } catch (StripeException e) {
+            throw new PaymentGatewayException("Unable to open the card registration page", e);
+        }
+    }
+
+    /** The card a completed setup session saved, read back from the restaurant's account. */
+    public RegisteredCard readRegisteredCard(String setupIntentId, String connectedAccountId) {
+        requireKey();
+        try {
+            SetupIntent intent = client.setupIntents()
+                    .retrieve(setupIntentId, options(connectedAccountId, null));
+            return new RegisteredCard(intent.getCustomer(), intent.getPaymentMethod());
+        } catch (StripeException e) {
+            throw new PaymentGatewayException("Unable to read the registered card", e);
+        }
+    }
+
+    /**
+     * Debits a no-show penalty from a card registered earlier.
+     *
+     * <p>Charged directly on the restaurant's account and with no application fee: a
+     * penalty compensates a table lost, and Alloquence takes no share of that.
+     *
+     * <p>{@code offSession} because nobody is at a browser — which also means the bank
+     * may refuse for want of authentication, and that refusal is a normal outcome the
+     * caller has to handle.
+     */
+    public String chargeNoShowPenalty(NoShowCharge charge) {
+        requireKey();
+        PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
+                .setAmount((long) charge.amountCents())
+                .setCurrency(charge.currency())
+                .setCustomer(charge.customerId())
+                .setPaymentMethod(charge.paymentMethodId())
+                .setConfirm(true)
+                .setOffSession(true)
+                .setDescription("Absence non annulée — réservation " + charge.reservationId())
+                .putMetadata(RESERVATION_METADATA_KEY, charge.reservationId().toString())
+                .build();
+        try {
+            PaymentIntent intent = client.paymentIntents().create(params,
+                    options(charge.connectedAccountId(), charge.idempotencyKey()));
+            if (!"succeeded".equals(intent.getStatus())) {
+                throw new PaymentGatewayException(
+                        "Stripe did not settle the penalty: " + intent.getStatus());
+            }
+            return intent.getId();
+        } catch (StripeException e) {
+            throw new PaymentGatewayException("Unable to charge the no-show penalty", e);
+        }
+    }
+
+    /**
+     * Forgets a diner's card once it can no longer be needed.
+     *
+     * <p>Best effort: a card already detached, or belonging to a deleted customer, is
+     * the outcome we wanted anyway.
+     */
+    public void detachCard(String paymentMethodId, String connectedAccountId) {
+        if (paymentMethodId == null || paymentMethodId.isBlank()) {
+            return;
+        }
+        requireKey();
+        try {
+            client.paymentMethods().detach(paymentMethodId, options(connectedAccountId, null));
+        } catch (StripeException e) {
+            log.info("Could not detach payment method {} ({}); treating it as already gone",
+                    paymentMethodId, e.getMessage());
         }
     }
 

@@ -17,6 +17,8 @@ import com.callbot.ai.exception.InvalidRequestException;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.gateway.CheckoutSession;
 import com.callbot.ai.gateway.stripe.BookingFeeCharge;
+import com.callbot.ai.gateway.stripe.CardRegistration;
+import com.callbot.ai.gateway.stripe.RegisteredCard;
 import com.callbot.ai.gateway.stripe.ConnectWebhookEvent;
 import com.callbot.ai.gateway.stripe.StripeConnectGateway;
 import com.callbot.ai.model.Commission;
@@ -90,17 +92,30 @@ public class ReservationPaymentService {
         Reservation reservation = byPaymentToken(paymentToken);
         Restaurant restaurant = restaurantOf(reservation);
 
-        requirePayable(reservation);
+        requireAwaitingGuarantee(reservation);
         Organization organization = organizationOf(restaurant);
         connectAccount.requireAbleToCharge(organization.getId());
+
+        CheckoutSession session = GuaranteeMode.NO_SHOW.code().equals(reservation.getGuaranteeMode())
+                ? registerCard(reservation, restaurant, organization)
+                : collectBookingFee(reservation, restaurant, organization);
+
+        reservation.setStripeSessionId(session.id());
+        reservationRepository.save(reservation);
+
+        return new PaymentRedirectResponse(session.url());
+    }
+
+    private CheckoutSession collectBookingFee(Reservation reservation, Restaurant restaurant,
+            Organization organization) {
+        int amountCents = reservation.getGuaranteeAmountCents();
+        Commission commission = Commission.on(amountCents);
+        reservation.setApplicationFeeCents(commission.amountCents());
 
         // Only one session may be payable at a time.
         connect.expireCheckout(reservation.getStripeSessionId());
 
-        int amountCents = reservation.getGuaranteeAmountCents();
-        Commission commission = Commission.on(amountCents);
-
-        CheckoutSession session = connect.createBookingFeeCheckout(new BookingFeeCharge(
+        return connect.createBookingFeeCheckout(new BookingFeeCharge(
                 reservation.getId(),
                 restaurant.getName(),
                 amountCents,
@@ -108,12 +123,55 @@ public class ReservationPaymentService {
                 commission.amountCents(),
                 organization.getStripeAccountId(),
                 emailOf(reservation)));
+    }
 
-        reservation.setStripeSessionId(session.id());
-        reservation.setApplicationFeeCents(commission.amountCents());
+    /**
+     * The no-show path takes nothing: the diner registers a card and is told so plainly.
+     * Alloquence charges no commission on a penalty, so no application fee is set.
+     */
+    private CheckoutSession registerCard(Reservation reservation, Restaurant restaurant,
+            Organization organization) {
+        return connect.createCardRegistration(new CardRegistration(
+                reservation.getId(),
+                restaurant.getName(),
+                reservation.getCurrency(),
+                organization.getStripeAccountId(),
+                emailOf(reservation)));
+    }
+
+    /**
+     * Records the card a diner registered, which confirms their reservation without a
+     * cent changing hands.
+     */
+    public void recordRegisteredCard(ConnectWebhookEvent.CardRegistered registered) {
+        Reservation reservation = reservationRepository.findById(registered.reservationId()).orElse(null);
+        if (reservation == null) {
+            log.warn("Stripe reported a card for unknown reservation {}", registered.reservationId());
+            return;
+        }
+        if (GuaranteeStatus.SECURED.equals(reservation.getGuaranteeStatus())) {
+            return;
+        }
+        if (ReservationStatus.CANCELLED.equals(reservation.getStatus())) {
+            log.warn("Reservation {} had its card registered after being released",
+                    reservation.getId());
+            return;
+        }
+
+        RegisteredCard card = connect.readRegisteredCard(
+                registered.setupIntentId(), registered.connectedAccountId());
+
+        reservation.setStatus(ReservationStatus.CONFIRMED);
+        reservation.setGuaranteeStatus(GuaranteeStatus.SECURED);
+        reservation.setStripeSetupIntentId(registered.setupIntentId());
+        reservation.setStripeCustomerId(card.customerId());
+        reservation.setStripePaymentMethodId(card.paymentMethodId());
+        // Nothing was paid, so there is nothing to pay out and nothing to refund.
+        reservation.setPaymentToken(null);
+        reservation.setGuaranteeExpiresAt(null);
         reservationRepository.save(reservation);
 
-        return new PaymentRedirectResponse(session.url());
+        events.publishEvent(new ReservationConfirmedEvent(reservation.getId()));
     }
 
     /**
@@ -267,9 +325,9 @@ public class ReservationPaymentService {
         return OffsetDateTime.now().isBefore(reservation.getStartsAt().minusHours(windowHours));
     }
 
-    private void requirePayable(Reservation reservation) {
-        if (!GuaranteeMode.BOOKING_FEE.code().equals(reservation.getGuaranteeMode())) {
-            throw new InvalidRequestException("Cette réservation n'attend aucun règlement");
+    private void requireAwaitingGuarantee(Reservation reservation) {
+        if (GuaranteeMode.NONE.code().equals(reservation.getGuaranteeMode())) {
+            throw new InvalidRequestException("Cette réservation n'attend aucune garantie");
         }
         if (!GuaranteeStatus.AWAITING.equals(reservation.getGuaranteeStatus())
                 || !ReservationStatus.AWAITING_PAYMENT.equals(reservation.getStatus())) {

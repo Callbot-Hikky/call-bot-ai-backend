@@ -255,6 +255,74 @@ public class ReservationMessageTemplates {
                         moneyNote);
     }
 
+    /**
+     * Message 6: the penalty was taken.
+     *
+     * <p>Says what happened, how much, and who to talk to. A debit nobody explains is a
+     * debit the diner disputes with their bank, which costs everyone more than the meal.
+     */
+    public String forClientPenaltyCharged(Reservation reservation, Customer customer,
+            Restaurant restaurant) {
+        return """
+                %s,
+                Vous n'avez pas honoré votre réservation du %s chez **%s**, et elle
+                n'avait pas été annulée.
+
+                **Débité** : %s
+
+                Ce montant correspond à la garantie acceptée lors de votre réservation.
+                Si vous pensez qu'il s'agit d'une erreur, appelez le restaurant au %s :
+                lui seul peut y revenir."""
+                .formatted(greeting(customer),
+                        formatDateTime(reservation.getStartsAt(), restaurant.getTimezone()),
+                        restaurant.getName(),
+                        formatAmount(reservation.getGuaranteeAmountCents(), reservation.getCurrency()),
+                        formatPhoneLink(restaurant.getPhoneNumber()));
+    }
+
+    public String forRestaurantPenaltyCharged(Reservation reservation, Customer customer,
+            Restaurant restaurant) {
+        return """
+                **Pénalité no-show encaissée** 💶
+
+                **Client** : %s
+                **Date** : %s
+                **Nombre de personnes** : %d
+                **Encaissé** : %s
+
+                Aucune commission n'est prélevée sur cette somme."""
+                .formatted(formatCustomerIdentity(customer),
+                        formatDateTime(reservation.getStartsAt(), restaurant.getTimezone()),
+                        reservation.getPartySize(),
+                        formatAmount(reservation.getGuaranteeAmountCents(), reservation.getCurrency()));
+    }
+
+    /**
+     * Told to the restaurateur only. The diner is not chased for a failed debit: nothing
+     * left their account, and it is now between them and the restaurant.
+     */
+    public String forRestaurantPenaltyAbandoned(Reservation reservation, Customer customer,
+            Restaurant restaurant, String reason) {
+        return """
+                **Pénalité no-show non recouvrée** ⚠️
+
+                **Client** : %s
+                **Date** : %s
+                **Montant attendu** : %s
+
+                La carte a été refusée à deux reprises, à 24 h d'écart. Nous n'essaierons
+                plus. Motif du dernier refus : %s
+
+                Vous pouvez contacter le client directement au %s."""
+                .formatted(formatCustomerIdentity(customer),
+                        formatDateTime(reservation.getStartsAt(), restaurant.getTimezone()),
+                        formatAmount(reservation.getGuaranteeAmountCents(), reservation.getCurrency()),
+                        reason == null ? "non précisé" : reason,
+                        customer != null && customer.getPhone() != null
+                                ? customer.getPhone()
+                                : "numéro inconnu");
+    }
+
     /** The window frozen on the reservation, which is the one the diner was promised. */
     private int refundWindowOf(Reservation reservation) {
         return reservation.getGuaranteeRefundWindowHours() == null

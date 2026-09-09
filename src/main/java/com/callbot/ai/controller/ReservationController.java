@@ -25,6 +25,7 @@ import com.callbot.ai.security.AuthenticatedCaller;
 import com.callbot.ai.dto.RescheduleSlotsResponse;
 import com.callbot.ai.dto.ReservationRequest;
 import com.callbot.ai.dto.ReservationResponse;
+import com.callbot.ai.service.NoShowService;
 import com.callbot.ai.service.ReservationService;
 
 import jakarta.validation.Valid;
@@ -36,6 +37,7 @@ import lombok.RequiredArgsConstructor;
 public class ReservationController {
 
     private final ReservationService reservationService;
+    private final NoShowService noShowService;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -91,6 +93,21 @@ public class ReservationController {
             @RequestParam(defaultValue = "false") boolean notify,
             Authentication authentication) {
         return reservationService.update(id, request, notify, AuthenticatedCaller.emailOf(authentication));
+    }
+
+    /**
+     * Records that the diner did not come. Never inferred: a table nobody marks is a
+     * table that was honoured.
+     */
+    @PostMapping("/{id}/no-show")
+    public ReservationResponse recordNoShow(@PathVariable UUID id, Authentication authentication) {
+        return noShowService.record(id, AuthenticatedCaller.emailOf(authentication));
+    }
+
+    /** Takes the absence back, while the cancellation window is still open. */
+    @DeleteMapping("/{id}/no-show")
+    public ReservationResponse undoNoShow(@PathVariable UUID id, Authentication authentication) {
+        return noShowService.undo(id, AuthenticatedCaller.emailOf(authentication));
     }
 
     @DeleteMapping("/{id}")

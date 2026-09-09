@@ -75,6 +75,36 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
     /** The reservation a bank dispute refers to; a dispute carries no metadata of ours. */
     Optional<Reservation> findByStripePaymentIntentId(String stripePaymentIntentId);
 
+    /**
+     * Penalties whose cancellation window has closed and which are still unpaid.
+     *
+     * <p>Locked and skipped rather than queued: two instances must never debit the same
+     * diner twice, and a row another instance is already charging is not worth waiting on.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
+    @Query("""
+            SELECT r FROM Reservation r
+            WHERE r.penaltyDueAt IS NOT NULL
+              AND r.penaltyDueAt < :now
+              AND r.penaltyChargedAt IS NULL
+              AND r.penaltyAttempts < :maxAttempts
+            """)
+    List<Reservation> lockDuePenalties(@Param("now") OffsetDateTime now,
+            @Param("maxAttempts") int maxAttempts);
+
+    /** Cards still held for services that are over and can no longer produce a debit. */
+    @Query("""
+            SELECT r FROM Reservation r
+            WHERE r.stripePaymentMethodId IS NOT NULL
+              AND r.paymentMethodDetachedAt IS NULL
+              AND r.endsAt < :before
+              AND (r.penaltyDueAt IS NULL OR r.penaltyChargedAt IS NOT NULL
+                   OR r.penaltyAttempts >= :maxAttempts)
+            """)
+    List<Reservation> findCardsToDetach(@Param("before") OffsetDateTime before,
+            @Param("maxAttempts") int maxAttempts);
+
     /** Denominator of an organization's dispute rate. */
     @Query("""
             SELECT COUNT(r) FROM Reservation r, Restaurant s
