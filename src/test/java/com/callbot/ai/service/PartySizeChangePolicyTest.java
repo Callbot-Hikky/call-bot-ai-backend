@@ -18,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.callbot.ai.exception.PartySizeChangeRejectedException;
 import com.callbot.ai.model.GuaranteeMode;
+import com.callbot.ai.model.GuaranteeStatus;
 import com.callbot.ai.model.Reservation;
 import com.callbot.ai.model.RestaurantTable;
 import com.callbot.ai.repository.ReservationRepository;
@@ -41,12 +42,19 @@ class PartySizeChangePolicyTest {
     private static final OffsetDateTime ENDS_AT = OffsetDateTime.parse("2030-01-01T21:00:00Z");
 
     private Reservation reservation(String mode) {
+        // A booking-fee reservation that was actually paid for: the case where extra
+        // guests genuinely owe a top-up.
+        return reservation(mode, GuaranteeStatus.SECURED);
+    }
+
+    private Reservation reservation(String mode, String guaranteeStatus) {
         return Reservation.builder()
                 .id(reservationId)
                 .restaurantId(restaurantId)
                 .tableId(ownTableId)
                 .partySize(2)
                 .guaranteeMode(mode)
+                .guaranteeStatus(guaranteeStatus)
                 .build();
     }
 
@@ -166,6 +174,62 @@ class PartySizeChangePolicyTest {
         tables(table(ownTableId, 2));
 
         assertThatThrownBy(() -> check(reservation(GuaranteeMode.BOOKING_FEE.code()), 6))
+                .isInstanceOf(PartySizeChangeRejectedException.class)
+                .hasFieldOrPropertyWithValue("reason", PartySizeChangeRejectedException.NO_TABLE_AVAILABLE);
+    }
+
+    @Test
+    void check_whenRisingInBookingFeeModeAwaitingPayment_rejectsWithTopUpRequired() {
+        // The amount was frozen when the link was sent: growing the party underneath it
+        // would quietly undercharge the table.
+        tables(table(ownTableId, 2), table(UUID.randomUUID(), 8));
+        busy();
+
+        assertThatThrownBy(() -> check(
+                reservation(GuaranteeMode.BOOKING_FEE.code(), GuaranteeStatus.AWAITING), 6))
+                .isInstanceOf(PartySizeChangeRejectedException.class)
+                .hasFieldOrPropertyWithValue("reason", PartySizeChangeRejectedException.TOP_UP_REQUIRED);
+    }
+
+    @Test
+    void check_whenRisingInBookingFeeModeButStaffWaivedTheFee_passes() {
+        // Nothing was ever collected: asking for a top-up would strand the party behind
+        // a payment of zero.
+        tables(table(ownTableId, 2), table(UUID.randomUUID(), 8));
+        busy();
+
+        assertThatCode(() -> check(
+                reservation(GuaranteeMode.BOOKING_FEE.code(), GuaranteeStatus.EXEMPTED), 6))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void check_whenRisingInBookingFeeModeButTheFeeWasRefunded_passes() {
+        tables(table(ownTableId, 2), table(UUID.randomUUID(), 8));
+        busy();
+
+        assertThatCode(() -> check(
+                reservation(GuaranteeMode.BOOKING_FEE.code(), GuaranteeStatus.REFUNDED), 6))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void check_whenRisingInBookingFeeModeButNoFeeWasAsked_passes() {
+        tables(table(ownTableId, 2), table(UUID.randomUUID(), 8));
+        busy();
+
+        assertThatCode(() -> check(
+                reservation(GuaranteeMode.BOOKING_FEE.code(), GuaranteeStatus.NOT_REQUIRED), 6))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void check_whenWaivedFeeButNoTableIsLargeEnough_stillRejectsOnTheTable() {
+        // Waiving the fee frees the money question, not the room.
+        tables(table(ownTableId, 2));
+
+        assertThatThrownBy(() -> check(
+                reservation(GuaranteeMode.BOOKING_FEE.code(), GuaranteeStatus.EXEMPTED), 6))
                 .isInstanceOf(PartySizeChangeRejectedException.class)
                 .hasFieldOrPropertyWithValue("reason", PartySizeChangeRejectedException.NO_TABLE_AVAILABLE);
     }
