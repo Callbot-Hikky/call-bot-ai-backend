@@ -135,12 +135,75 @@ class NoShowServiceTest {
         reservation.setNoShowRecordedBy(staffId);
         reservation.setPenaltyDueAt(OffsetDateTime.now().plusHours(1));
         reservationExists(reservation);
+        when(scope.userIdOf(STAFF)).thenReturn(Optional.of(staffId));
 
         service.undo(reservationId, STAFF);
 
-        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.COMPLETED);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
         assertThat(reservation.getPenaltyDueAt()).isNull();
         assertThat(reservation.getNoShowRecordedAt()).isNull();
+    }
+
+    @Test
+    void anAbsenceCannotBeRetractedWhileTheBankIsAnswering() {
+        Reservation reservation = servedAndGuaranteed();
+        reservation.setStatus(ReservationStatus.NO_SHOW);
+        reservation.setNoShowRecordedAt(OffsetDateTime.now().minusHours(3));
+        reservation.setNoShowRecordedBy(staffId);
+        // Claimed by the sweep: attempt counted, due date cleared, nothing charged yet.
+        reservation.setPenaltyAttempts(1);
+        reservation.setPenaltyDueAt(null);
+        when(reservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
+
+        assertThatThrownBy(() -> service.undo(reservationId, STAFF))
+                .isInstanceOf(InvalidRequestException.class)
+                .hasMessageContaining("en cours");
+        verify(reservationRepository, never()).save(any());
+    }
+
+    @Test
+    void retractingRestoresTheReservationRatherThanClosingIt() {
+        Reservation reservation = servedAndGuaranteed();
+        reservation.setStatus(ReservationStatus.NO_SHOW);
+        reservation.setNoShowRecordedAt(OffsetDateTime.now().minusMinutes(5));
+        reservation.setNoShowRecordedBy(staffId);
+        reservation.setPenaltyDueAt(OffsetDateTime.now().plusHours(1));
+        reservationExists(reservation);
+        when(scope.userIdOf(STAFF)).thenReturn(Optional.of(staffId));
+
+        service.undo(reservationId, STAFF);
+
+        // The service may still be under way; closing it would be a second wrong statement.
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+    }
+
+    @Test
+    void anAbsenceIsRefusedOnceTheClientsCardHasBeenForgotten() {
+        Reservation reservation = servedAndGuaranteed();
+        reservation.setStartsAt(OffsetDateTime.now().minusDays(5));
+        reservation.setEndsAt(OffsetDateTime.now().minusDays(5).plusHours(2));
+        when(reservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
+        when(scope.userIdOf(STAFF)).thenReturn(Optional.of(staffId));
+
+        // Recording now would promise a debit that can only fail.
+        assertThatThrownBy(() -> service.record(reservationId, STAFF))
+                .isInstanceOf(InvalidRequestException.class)
+                .hasMessageContaining("trop ancien");
+    }
+
+    @Test
+    void theMicroserviceCannotRetractAnAbsenceAnyMoreThanItCanRecordOne() {
+        Reservation reservation = servedAndGuaranteed();
+        reservation.setStatus(ReservationStatus.NO_SHOW);
+        reservation.setNoShowRecordedAt(OffsetDateTime.now().minusMinutes(5));
+        reservation.setNoShowRecordedBy(staffId);
+        reservation.setPenaltyDueAt(OffsetDateTime.now().plusHours(1));
+        when(reservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
+        when(scope.userIdOf(null)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.undo(reservationId, null))
+                .isInstanceOf(InvalidRequestException.class);
+        verify(reservationRepository, never()).save(any());
     }
 
     @Test

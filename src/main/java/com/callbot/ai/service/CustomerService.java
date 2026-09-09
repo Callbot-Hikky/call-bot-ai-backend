@@ -61,7 +61,7 @@ public class CustomerService {
 
     @Transactional(readOnly = true)
     public List<CustomerResponse> list(UUID restaurantId, String callerEmail) {
-List<Customer> customers = listFor(restaurantId, callerEmail);
+        List<Customer> customers = listFor(restaurantId, callerEmail);
         return customers.stream().map(CustomerResponse::from).toList();
     }
 

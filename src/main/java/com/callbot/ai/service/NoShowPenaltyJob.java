@@ -48,10 +48,12 @@ public class NoShowPenaltyJob {
     @Scheduled(cron = "${app.no-show.detach-cron:0 45 4 * * *}")
     public void forgetCardsOfPastServices() {
         for (Reservation reservation : penalties.cardsToForget(OffsetDateTime.now())) {
-            penalties.connectedAccountFor(reservation).ifPresent(account -> {
-                connect.detachCard(reservation.getStripePaymentMethodId(), account);
-                penalties.markCardForgotten(reservation.getId());
-            });
+            // The row is cleared whether or not Stripe had anything to detach. An
+            // organization with no account has no card to forget, and leaving the row
+            // marked would re-select it every night for ever.
+            penalties.connectedAccountFor(reservation).ifPresent(account ->
+                    connect.detachCard(reservation.getStripePaymentMethodId(), account));
+            penalties.markCardForgotten(reservation.getId());
         }
     }
 
@@ -59,8 +61,9 @@ public class NoShowPenaltyJob {
         String account = penalties.connectedAccountFor(reservation).orElse(null);
         NoShowCharge charge = penalties.chargeFor(reservation, account).orElse(null);
         if (charge == null) {
-            // Nothing to debit: no card, no amount, or no account able to receive it.
-            penalties.settleFailed(reservation.getId(), "Aucun moyen de paiement exploitable");
+            // No card, no amount, or no account able to receive it. None of that improves
+            // by waiting a day, so it is given up on at once rather than retried.
+            penalties.abandon(reservation.getId(), "Aucun moyen de paiement exploitable");
             return;
         }
         try {
