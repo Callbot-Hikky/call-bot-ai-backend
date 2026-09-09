@@ -58,6 +58,7 @@ public class ReservationService {
     private final ApplicationEventPublisher events;
     private final OrganizationScope scope;
     private final GuaranteePolicy guaranteePolicy;
+    private final PartySizeChangePolicy partySizeChangePolicy;
 
     public ReservationResponse create(ReservationRequest request, String callerEmail) {
         Restaurant restaurant = scope.ownedRestaurant(request.restaurantId(), callerEmail);
@@ -106,6 +107,9 @@ public class ReservationService {
 
     public ReservationResponse update(UUID id, ReservationRequest request, boolean notify, String callerEmail) {
         Reservation reservation = find(id, callerEmail);
+        // Before anything is written: a change in covers goes through the rule. The check
+        // uses the requested slot, since that is the slot the reservation will occupy.
+        partySizeChangePolicy.check(reservation, request.partySize(), request.startsAt(), request.endsAt());
         reservation.setCustomerId(request.customerId());
         reservation.setTableId(request.tableId());
         reservation.setCallId(request.callId());

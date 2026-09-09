@@ -3,6 +3,7 @@ package com.callbot.ai.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -24,6 +25,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import com.callbot.ai.dto.ReservationRequest;
 import com.callbot.ai.dto.ReservationResponse;
 import com.callbot.ai.exception.InvalidRequestException;
+import com.callbot.ai.exception.PartySizeChangeRejectedException;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.model.Reservation;
 import com.callbot.ai.model.ReservationStatus;
@@ -51,6 +53,8 @@ class ReservationServiceTest {
     private OrganizationScope scope;
     @Mock
     private GuaranteePolicy guaranteePolicy;
+    @Mock
+    private PartySizeChangePolicy partySizeChangePolicy;
     @InjectMocks
     private ReservationService reservationService;
 
@@ -252,5 +256,38 @@ class ReservationServiceTest {
         reservationService.list(null, Set.of(), SERVICE_CALLER);
 
         verify(reservationRepository).findAll();
+    }
+
+    @Test
+    void update_whenPartySizeChanges_checksTheRuleBeforeWriting() {
+        UUID id = UUID.randomUUID();
+        when(reservationRepository.findById(id)).thenReturn(Optional.of(reservation(id)));
+        when(reservationRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        ReservationRequest raised = new ReservationRequest(restaurantId, null, null, null,
+                OffsetDateTime.parse("2030-01-01T19:00:00Z"),
+                OffsetDateTime.parse("2030-01-01T21:00:00Z"),
+                6, null, null, null, null);
+
+        ReservationResponse response = reservationService.update(id, raised, false, OWNER);
+
+        assertThat(response.partySize()).isEqualTo(6);
+        verify(partySizeChangePolicy).check(any(), eq(6),
+                eq(OffsetDateTime.parse("2030-01-01T19:00:00Z")),
+                eq(OffsetDateTime.parse("2030-01-01T21:00:00Z")));
+    }
+
+    @Test
+    void update_whenTheRuleRejectsTheChange_writesNothing() {
+        UUID id = UUID.randomUUID();
+        when(reservationRepository.findById(id)).thenReturn(Optional.of(reservation(id)));
+        doThrow(new PartySizeChangeRejectedException(
+                PartySizeChangeRejectedException.TOP_UP_REQUIRED, "top-up owed"))
+                .when(partySizeChangePolicy).check(any(), any(), any(), any());
+
+        assertThatThrownBy(() -> reservationService.update(id, request(), false, OWNER))
+                .isInstanceOf(PartySizeChangeRejectedException.class);
+
+        verify(reservationRepository, never()).save(any());
     }
 }
