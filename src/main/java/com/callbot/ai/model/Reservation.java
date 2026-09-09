@@ -171,6 +171,13 @@ public class Reservation {
     @Column(name = "penalty_charged_at")
     private OffsetDateTime penaltyChargedAt;
 
+    /**
+     * Kept apart from {@code stripePaymentIntentId}, which a bank dispute looks up: a
+     * dispute over a penalty is not one Alloquence absorbs, having taken no commission.
+     */
+    @Column(name = "stripe_penalty_intent_id")
+    private String stripePenaltyIntentId;
+
     @PrePersist
     void onCreate() {
         OffsetDateTime now = OffsetDateTime.now();

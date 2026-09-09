@@ -43,9 +43,7 @@ public class NoShowService {
 
     public ReservationResponse record(UUID reservationId, String callerEmail) {
         Reservation reservation = owned(reservationId, callerEmail);
-        UUID staffId = scope.userIdOf(callerEmail)
-                .orElseThrow(() -> new InvalidRequestException(
-                        "Seul un membre du personnel signé peut constater une absence"));
+        UUID staffId = requireSignedInStaff(callerEmail);
 
         requireRecordable(reservation);
 
@@ -72,13 +70,40 @@ public class NoShowService {
             throw new InvalidRequestException(
                     "La pénalité a déjà été débitée : le remboursement doit être fait à la main");
         }
+        if (chargeInFlight(reservation)) {
+            // The window has closed and the bank is being asked right now. Retracting
+            // here would leave the diner charged for a reservation marked as honoured.
+            throw new InvalidRequestException(
+                    "Le débit est en cours : réessayez dans un instant");
+        }
+        requireSignedInStaff(callerEmail);
 
-        reservation.setStatus(ReservationStatus.COMPLETED);
+        // Back to confirmed, not completed: staff may be taking back a mistaken tap on a
+        // service still under way, and closing it would be a second wrong statement.
+        reservation.setStatus(ReservationStatus.CONFIRMED);
         reservation.setNoShowRecordedAt(null);
         reservation.setNoShowRecordedBy(null);
         reservation.setPenaltyDueAt(null);
         reservation.setPenaltyAttempts(0);
         return ReservationResponse.from(reservationRepository.save(reservation));
+    }
+
+    /**
+     * A person, not the AI microservice. Both recording an absence and taking one back
+     * are judgements about what happened in the dining room, and an API key is nobody.
+     */
+    private UUID requireSignedInStaff(String callerEmail) {
+        return scope.userIdOf(callerEmail)
+                .orElseThrow(() -> new InvalidRequestException(
+                        "Seul un membre du personnel signé peut se prononcer sur une absence"));
+    }
+
+    /** Claimed by the penalty sweep: the window has closed and the bank is answering. */
+    private boolean chargeInFlight(Reservation reservation) {
+        return reservation.getPenaltyAttempts() > 0
+                && reservation.getPenaltyDueAt() == null
+                && reservation.getPenaltyChargedAt() == null
+                && GuaranteeStatus.SECURED.equals(reservation.getGuaranteeStatus());
     }
 
     /** A penalty is only owed where one was agreed and a card actually registered. */
@@ -100,6 +125,14 @@ public class NoShowService {
         if (reservation.getStartsAt().isAfter(OffsetDateTime.now())) {
             // Nobody is absent from a meal that has not started.
             throw new InvalidRequestException("Le service n'a pas encore commencé");
+        }
+        if (reservation.getEndsAt()
+                .plus(NoShowPenaltyService.CARD_RETENTION_AFTER_SERVICE)
+                .isBefore(OffsetDateTime.now())) {
+            // The card was forgotten. Recording now would promise a debit that can only
+            // fail, so the refusal is said here rather than discovered two days later.
+            throw new InvalidRequestException(
+                    "Ce service est trop ancien : le moyen de paiement du client n'est plus conservé");
         }
     }
 

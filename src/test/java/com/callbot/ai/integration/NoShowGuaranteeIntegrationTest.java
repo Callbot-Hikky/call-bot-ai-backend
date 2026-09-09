@@ -148,7 +148,8 @@ class NoShowGuaranteeIntegrationTest extends AbstractIntegrationTest {
         mockMvc.perform(delete("/api/reservations/" + reservationId + "/no-show")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("completed"));
+                // Restored, not closed: the service may still be under way.
+                .andExpect(jsonPath("$.status").value("confirmed"));
 
         penaltyJob.chargeDuePenalties();
 

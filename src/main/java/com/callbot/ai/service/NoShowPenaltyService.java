@@ -17,6 +17,7 @@ import com.callbot.ai.gateway.stripe.NoShowCharge;
 import com.callbot.ai.model.GuaranteeStatus;
 import com.callbot.ai.model.Organization;
 import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.notification.ReservationPenaltyAbandonedEvent;
 import com.callbot.ai.notification.ReservationPenaltyChargedEvent;
@@ -47,16 +48,32 @@ public class NoShowPenaltyService {
     public static final Duration RETRY_DELAY = Duration.ofDays(1);
 
     /** Cards are kept a little past the service, then forgotten. */
-    static final Duration CARD_RETENTION_AFTER_SERVICE = Duration.ofDays(2);
+    public static final Duration CARD_RETENTION_AFTER_SERVICE = Duration.ofDays(2);
+
+    /** Same rule as a booking fee: nothing leaves for the bank before then. */
+    private static final Duration PAYOUT_DELAY_AFTER_SERVICE = Duration.ofDays(1);
 
     private final ReservationRepository reservationRepository;
     private final RestaurantRepository restaurantRepository;
     private final OrganizationRepository organizationRepository;
     private final ApplicationEventPublisher events;
 
+    /**
+     * Takes ownership of the penalties that are due, and commits that ownership.
+     *
+     * <p>The row lock alone would be worthless here: it dies with this transaction, and
+     * the Stripe call happens after. What makes the claim exclusive is the write — the
+     * attempt is counted and the due date cleared, so a second instance scanning a
+     * moment later no longer sees these rows and cannot debit the same card twice.
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public List<Reservation> claimDuePenalties(OffsetDateTime now) {
-        return reservationRepository.lockDuePenalties(now, MAX_ATTEMPTS);
+        List<Reservation> due = reservationRepository.lockDuePenalties(now, MAX_ATTEMPTS);
+        for (Reservation reservation : due) {
+            reservation.setPenaltyAttempts(reservation.getPenaltyAttempts() + 1);
+            reservation.setPenaltyDueAt(null);
+        }
+        return reservationRepository.saveAll(due);
     }
 
     /** The account the penalty is charged on: the restaurant's own, never Alloquence's. */
@@ -74,20 +91,46 @@ public class NoShowPenaltyService {
         if (reservation == null) {
             return;
         }
+        if (!ReservationStatus.NO_SHOW.equals(reservation.getStatus())) {
+            // Staff took the absence back while the bank was answering. The money has
+            // left, so this is not something to paper over: it is recorded loudly and
+            // given back by hand, rather than quietly marking a diner absent again.
+            log.error("Reservation {} was charged {} but its absence had been retracted; "
+                    + "a manual refund is due", reservationId, paymentIntentId);
+            return;
+        }
+
         OffsetDateTime now = OffsetDateTime.now();
         reservation.setGuaranteeStatus(GuaranteeStatus.CHARGED);
-        reservation.setStripePaymentIntentId(paymentIntentId);
+        reservation.setStripePenaltyIntentId(paymentIntentId);
         reservation.setPenaltyChargedAt(now);
         reservation.setPenaltyDueAt(null);
-        reservation.setPenaltyAttempts(reservation.getPenaltyAttempts() + 1);
-        // The money is the restaurateur's and owes Alloquence nothing, so it joins the
-        // payout sweep at once rather than waiting a day after a service already past.
+        // The money is the restaurateur's and owes Alloquence nothing. It follows the
+        // same rule as every other sum: payable a day after the service.
         reservation.setPaidAt(now);
         reservation.setApplicationFeeCents(0);
-        reservation.setPayoutEligibleAt(now);
+        reservation.setPayoutEligibleAt(reservation.getEndsAt().plus(PAYOUT_DELAY_AFTER_SERVICE));
         reservationRepository.save(reservation);
 
         events.publishEvent(new ReservationPenaltyChargedEvent(reservationId));
+    }
+
+    /**
+     * Gives up at once, without spending a retry.
+     *
+     * <p>For conditions a day's wait cannot change — no card on file, no account able to
+     * receive the money. Treating those as bank refusals would keep a restaurateur
+     * waiting two days for news that was already certain.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void abandon(UUID reservationId, String reason) {
+        reservationRepository.findById(reservationId).ifPresent(reservation -> {
+            reservation.setGuaranteeStatus(GuaranteeStatus.CHARGE_FAILED);
+            reservation.setPenaltyDueAt(null);
+            reservationRepository.save(reservation);
+            log.warn("Nothing to charge for reservation {}: {}", reservationId, reason);
+            events.publishEvent(new ReservationPenaltyAbandonedEvent(reservationId, reason));
+        });
     }
 
     /**
@@ -100,8 +143,7 @@ public class NoShowPenaltyService {
         if (reservation == null) {
             return;
         }
-        int attempts = reservation.getPenaltyAttempts() + 1;
-        reservation.setPenaltyAttempts(attempts);
+        int attempts = reservation.getPenaltyAttempts();
 
         if (attempts >= MAX_ATTEMPTS) {
             reservation.setGuaranteeStatus(GuaranteeStatus.CHARGE_FAILED);
@@ -113,6 +155,8 @@ public class NoShowPenaltyService {
             return;
         }
 
+        // Re-armed for another go: claiming cleared the due date, and only a refusal
+        // that still has an attempt left puts it back.
         reservation.setPenaltyDueAt(OffsetDateTime.now().plus(RETRY_DELAY));
         reservationRepository.save(reservation);
         log.info("Penalty for reservation {} refused ({}); retrying in {}",
@@ -139,6 +183,7 @@ public class NoShowPenaltyService {
         if (reservation.getGuaranteeAmountCents() == null
                 || reservation.getStripePaymentMethodId() == null
                 || reservation.getStripeCustomerId() == null
+                || reservation.getNoShowRecordedAt() == null
                 || connectedAccountId == null) {
             return Optional.empty();
         }
@@ -149,8 +194,11 @@ public class NoShowPenaltyService {
                 reservation.getStripeCustomerId(),
                 reservation.getStripePaymentMethodId(),
                 connectedAccountId,
-                // Keyed on the attempt: a retry is a new authorisation, but a repeat of
-                // the same attempt after a lost answer is not a second debit.
-                "penalty-" + reservation.getId() + "-" + reservation.getPenaltyAttempts()));
+                // Keyed on the recording as well as the attempt. An absence taken back
+                // and recorded again is a new debt: without the timestamp, Stripe would
+                // replay the first authorisation and nobody would ever be charged.
+                "penalty-" + reservation.getId()
+                        + "-" + reservation.getNoShowRecordedAt().toEpochSecond()
+                        + "-" + reservation.getPenaltyAttempts()));
     }
 }

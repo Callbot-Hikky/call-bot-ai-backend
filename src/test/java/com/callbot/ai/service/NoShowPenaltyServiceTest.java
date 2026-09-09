@@ -19,6 +19,7 @@ import org.springframework.context.ApplicationEventPublisher;
 
 import com.callbot.ai.model.GuaranteeStatus;
 import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.notification.ReservationPenaltyAbandonedEvent;
 import com.callbot.ai.notification.ReservationPenaltyChargedEvent;
 import com.callbot.ai.repository.OrganizationRepository;
@@ -45,6 +46,9 @@ class NoShowPenaltyServiceTest {
         return Reservation.builder()
                 .id(reservationId)
                 .restaurantId(UUID.randomUUID())
+                .status(ReservationStatus.NO_SHOW)
+                .endsAt(OffsetDateTime.now().minusHours(3))
+                .noShowRecordedAt(OffsetDateTime.now().minusHours(2))
                 .guaranteeStatus(GuaranteeStatus.SECURED)
                 .guaranteeAmountCents(10000)
                 .currency("eur")
@@ -70,17 +74,38 @@ class NoShowPenaltyServiceTest {
         assertThat(reservation.getGuaranteeStatus()).isEqualTo(GuaranteeStatus.CHARGED);
         assertThat(reservation.getPenaltyChargedAt()).isNotNull();
         assertThat(reservation.getPenaltyDueAt()).isNull();
+        // Counted once, at claim time — never twice.
+        assertThat(reservation.getPenaltyAttempts()).isZero();
         // A penalty compensates a lost table; Alloquence takes no share of it.
         assertThat(reservation.getApplicationFeeCents()).isZero();
-        // The service is already past, so there is nothing left to wait for.
-        assertThat(reservation.getPayoutEligibleAt()).isNotNull();
-        assertThat(reservation.getPaidAt()).isNotNull();
+        // Same payout rule as a booking fee: a day after the service, not at once.
+        assertThat(reservation.getPayoutEligibleAt()).isEqualTo(reservation.getEndsAt().plusDays(1));
+        // Kept apart from the booking-fee intent, which is what bank disputes look up.
+        assertThat(reservation.getStripePenaltyIntentId()).isEqualTo("pi_1");
+        assertThat(reservation.getStripePaymentIntentId()).isNull();
         verify(events).publishEvent(new ReservationPenaltyChargedEvent(reservationId));
     }
 
     @Test
-    void aFirstRefusalIsRetriedADayLater() {
+    void claimingCommitsTheOwnershipSoNoOtherInstanceCanDebitTheSameCard() {
         Reservation reservation = awaitingPenalty(0);
+        when(reservationRepository.lockDuePenalties(any(), org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(java.util.List.of(reservation));
+        when(reservationRepository.saveAll(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.claimDuePenalties(OffsetDateTime.now());
+
+        // The row lock dies with this transaction and the Stripe call comes after it;
+        // only the write makes the claim exclusive.
+        assertThat(reservation.getPenaltyAttempts()).isEqualTo(1);
+        assertThat(reservation.getPenaltyDueAt()).isNull();
+    }
+
+    @Test
+    void aFirstRefusalIsRetriedADayLater() {
+        // The claim already counted this attempt.
+        Reservation reservation = awaitingPenalty(1);
+        reservation.setPenaltyDueAt(null);
         reservationExists(reservation);
         OffsetDateTime before = OffsetDateTime.now();
 
@@ -95,7 +120,7 @@ class NoShowPenaltyServiceTest {
 
     @Test
     void aSecondRefusalGivesUpForGoodAndTellsTheRestaurateur() {
-        Reservation reservation = awaitingPenalty(1);
+        Reservation reservation = awaitingPenalty(NoShowPenaltyService.MAX_ATTEMPTS);
         reservationExists(reservation);
 
         service.settleFailed(reservationId, "insufficient_funds");
@@ -118,6 +143,45 @@ class NoShowPenaltyServiceTest {
 
         assertThat(firstKey).isNotEqualTo(secondKey);
         assertThat(firstKey).contains(reservationId.toString());
+    }
+
+    @Test
+    void aChargeThatLandsAfterTheAbsenceWasRetractedIsNotWrittenBack() {
+        Reservation reservation = awaitingPenalty(1);
+        reservation.setStatus(ReservationStatus.CONFIRMED);
+        when(reservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
+
+        service.settleCharged(reservationId, "pi_1");
+
+        // The money left, but the system must not restate that the diner was absent.
+        assertThat(reservation.getGuaranteeStatus()).isEqualTo(GuaranteeStatus.SECURED);
+        assertThat(reservation.getPenaltyChargedAt()).isNull();
+        verify(events, never()).publishEvent(any(ReservationPenaltyChargedEvent.class));
+    }
+
+    @Test
+    void anAbsenceRecordedAgainAfterBeingRetractedGetsItsOwnIdempotencyKey() {
+        Reservation first = awaitingPenalty(1);
+        Reservation reRecorded = awaitingPenalty(1);
+        reRecorded.setNoShowRecordedAt(first.getNoShowRecordedAt().plusMinutes(30));
+
+        // Without the recording in the key, Stripe would replay the first authorisation
+        // and the second, genuine debt would never be taken.
+        assertThat(service.chargeFor(first, "acct_1").orElseThrow().idempotencyKey())
+                .isNotEqualTo(service.chargeFor(reRecorded, "acct_1").orElseThrow().idempotencyKey());
+    }
+
+    @Test
+    void nothingToChargeIsGivenUpOnAtOnceRatherThanRetriedForADay() {
+        Reservation reservation = awaitingPenalty(1);
+        reservationExists(reservation);
+
+        service.abandon(reservationId, "Aucun moyen de paiement exploitable");
+
+        assertThat(reservation.getGuaranteeStatus()).isEqualTo(GuaranteeStatus.CHARGE_FAILED);
+        assertThat(reservation.getPenaltyDueAt()).isNull();
+        verify(events).publishEvent(new ReservationPenaltyAbandonedEvent(
+                reservationId, "Aucun moyen de paiement exploitable"));
     }
 
     @Test
