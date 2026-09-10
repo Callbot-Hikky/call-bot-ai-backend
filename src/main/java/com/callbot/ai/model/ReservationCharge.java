@@ -123,10 +123,28 @@ public class ReservationCharge {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
-    /** What the restaurateur keeps once Alloquence has taken its share. */
+    /**
+     * What the restaurateur keeps once Alloquence has taken its share, and once anything
+     * handed back to the diner has been taken off.
+     *
+     * <p>Money returned shrinks the share by more than itself: the commission goes back
+     * with it, pro rata, so what is left owed falls in the same proportion the payment
+     * did. Stripe has already pulled that share out of the connected account by the time
+     * this is read, so a payout computed any other way would ask the account for a
+     * balance it no longer holds.
+     *
+     * <p>The division truncates, which strands at most a cent per refunded charge on the
+     * platform's side. That is the direction to err in: the other one asks a restaurateur's
+     * account for money it does not have.
+     */
     public int restaurateurShareCents() {
+        int amount = amountCents == null ? 0 : amountCents;
+        if (amount <= 0) {
+            return 0;
+        }
         int fee = applicationFeeCents == null ? 0 : applicationFeeCents;
-        return Math.max(0, (amountCents == null ? 0 : amountCents) - fee);
+        int kept = Math.max(0, amount - (refundedAmountCents == null ? 0 : refundedAmountCents));
+        return (int) Math.max(0, (long) (amount - fee) * kept / amount);
     }
 
     public boolean isPaid() {
@@ -146,6 +164,44 @@ public class ReservationCharge {
         this.refundedAt = now;
         this.refundedAmountCents = this.amountCents;
         this.payoutEligibleAt = null;
+    }
+
+    /**
+     * Records that a share of this charge went back to the diner.
+     *
+     * <p>The charge stays {@code paid}: the covers that remain were still sold, and the
+     * rest is still owed to the restaurateur. Only {@code refundedAmountCents} moves, and
+     * {@link #restaurateurShareCents()} reads it — which is why the payout keeps working
+     * without knowing this happened.
+     *
+     * <p>Refunds accumulate, because a party can fall twice on the one charge that paid
+     * for it. Reaching the whole amount closes the charge exactly as a single full refund
+     * would: nothing is left, so nothing may be paid out.
+     *
+     * <p>The Stripe refund itself stays with the caller — only it knows the key that makes
+     * its retry safe.
+     *
+     * @throws IllegalArgumentException if the amount is not positive, or exceeds what is
+     *                                  left. Capping silently would leave the register
+     *                                  claiming a movement Stripe never made.
+     */
+    public void refundPartially(OffsetDateTime now, int refundCents) {
+        if (refundCents <= 0) {
+            throw new IllegalArgumentException("A refund of " + refundCents + " cents is not a refund");
+        }
+        int amount = amountCents == null ? 0 : amountCents;
+        int already = refundedAmountCents == null ? 0 : refundedAmountCents;
+        if (already + refundCents > amount) {
+            throw new IllegalArgumentException("Refunding " + refundCents
+                    + " cents would exceed the " + (amount - already) + " left on this charge");
+        }
+
+        this.refundedAt = now;
+        this.refundedAmountCents = already + refundCents;
+        if (this.refundedAmountCents == amount) {
+            this.status = ChargeStatus.REFUNDED;
+            this.payoutEligibleAt = null;
+        }
     }
 
     public boolean isPending() {

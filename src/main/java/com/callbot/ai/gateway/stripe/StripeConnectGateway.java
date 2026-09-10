@@ -248,12 +248,42 @@ public class StripeConnectGateway {
      *                       than a second refund
      */
     public void refundFully(String paymentIntentId, String idempotencyKey) {
-        requireKey();
-        RefundCreateParams params = RefundCreateParams.builder()
+        refund(RefundCreateParams.builder()
                 .setPaymentIntent(paymentIntentId)
                 .setReverseTransfer(true)
                 .setRefundApplicationFee(true)
-                .build();
+                .build(), paymentIntentId, idempotencyKey);
+    }
+
+    /**
+     * Gives back a share of what the diner paid, when their party shrank.
+     *
+     * <p>The transfer is reversed and the commission handed back <em>in the same
+     * proportion</em>: Stripe prorates both against the amount, so a quarter of the table
+     * given back takes a quarter of the restaurateur's share and a quarter of Alloquence's
+     * with it. Nobody keeps a commission on covers that will not be served.
+     *
+     * <p>What Stripe does not give back is its own processing fee on the refunded share —
+     * it never does, on any refund. That loss falls on Alloquence by construction: the
+     * diner is made whole, and the restaurateur only loses the covers they are no longer
+     * serving.
+     *
+     * @param amountCents    the share to hand back, never the whole charge — a full refund
+     *                       is {@link #refundFully} and carries different bookkeeping
+     * @param idempotencyKey makes a retry after a lost response a no-op at Stripe rather
+     *                       than a second refund
+     */
+    public void refundPartially(String paymentIntentId, int amountCents, String idempotencyKey) {
+        refund(RefundCreateParams.builder()
+                .setPaymentIntent(paymentIntentId)
+                .setAmount((long) amountCents)
+                .setReverseTransfer(true)
+                .setRefundApplicationFee(true)
+                .build(), paymentIntentId, idempotencyKey);
+    }
+
+    private void refund(RefundCreateParams params, String paymentIntentId, String idempotencyKey) {
+        requireKey();
         try {
             Refund refund = client.refunds().create(params, options(null, idempotencyKey));
             // Stripe always returns an id, so the id proves nothing: the status does.

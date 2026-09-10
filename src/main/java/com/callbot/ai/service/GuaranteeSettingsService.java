@@ -55,6 +55,9 @@ public class GuaranteeSettingsService {
         if (request.refundWindowHours() != null) {
             restaurant.setRefundWindowHours(request.refundWindowHours());
         }
+        if (request.modificationWindowHours() != null) {
+            restaurant.setModificationWindowHours(request.modificationWindowHours());
+        }
         return GuaranteeSettingsResponse.from(restaurantRepository.save(restaurant));
     }
 

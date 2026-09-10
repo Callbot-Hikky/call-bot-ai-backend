@@ -190,7 +190,19 @@ public class ReservationService {
     @Transactional(readOnly = true)
     public RescheduleSlotsResponse rescheduleSlots(UUID reservationId, LocalDate fromDate,
             Integer partySizeOverride, String callerEmail) {
-        Reservation reservation = find(reservationId, callerEmail);
+        return slotsFor(find(reservationId, callerEmail), fromDate, partySizeOverride);
+    }
+
+    /**
+     * The same search, from a reservation already in hand.
+     *
+     * <p>Split from the entry point above so the diner's own modification page can ask the
+     * identical question holding nothing but their token. One implementation, because two
+     * would eventually answer differently and someone would pick a slot that was never free.
+     */
+    @Transactional(readOnly = true)
+    public RescheduleSlotsResponse slotsFor(Reservation reservation, LocalDate fromDate,
+            Integer partySizeOverride) {
         Restaurant restaurant = restaurantRepository.findById(reservation.getRestaurantId())
                 .orElseThrow(() -> new ResourceNotFoundException("Restaurant", reservation.getRestaurantId()));
 
@@ -218,7 +230,8 @@ public class ReservationService {
         for (int i = 0; i < 7; i++) {
             LocalDate date = start.plusDays(i);
             days.add(new RescheduleSlotsResponse.Day(date,
-                    slotsForDay(restaurant, zone, hours, candidates, date, duration, reservationId)));
+                    slotsForDay(restaurant, zone, hours, candidates, date, duration,
+                            reservation.getId())));
         }
         return new RescheduleSlotsResponse(days);
     }

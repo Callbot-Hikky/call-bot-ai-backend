@@ -151,6 +151,28 @@ public class ReservationNotificationListener {
     }
 
     /**
+     * The diner changed their own booking.
+     *
+     * <p>The dining room is told every time, however small the change and whichever
+     * direction it went: a table that shrank from six to four is a table someone can
+     * resell, and nobody was on the telephone to hear about it. The restaurant's copy
+     * therefore carries what the booking was <em>before</em>, which the row no longer
+     * knows by the time this runs.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+    public void onReservationModifiedByGuest(ReservationModifiedByGuestEvent event) {
+        contextFor(event.reservationId(), "modified by the diner").ifPresent(context -> {
+            discord.sendClientSmsMessage(templates.forClientUpdated(
+                    context.reservation(), context.customer(), context.restaurant()));
+            discord.sendReservationMessage(templates.forRestaurantModifiedByGuest(
+                    context.reservation(), context.customer(), context.restaurant(),
+                    event.previousPartySize(), event.previousStartsAt(),
+                    event.refundedAmountCents()));
+        });
+    }
+
+    /**
      * A party grew and the difference is owed.
      *
      * <p>The charge is loaded by the id the event carried, not by "the pending top-up":

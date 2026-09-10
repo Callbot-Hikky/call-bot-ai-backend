@@ -77,6 +77,17 @@ public class Restaurant {
     @Column(name = "refund_window_hours", nullable = false)
     private Integer refundWindowHours = 48;
 
+    /**
+     * Hours before the service up to which a diner may still change their own booking.
+     *
+     * <p>Zero means up to the service itself, the same reading {@link #refundWindowHours}
+     * gives it. The two are independent: handing money back and moving a party do not
+     * commit the dining room in the same way.
+     */
+    @Builder.Default
+    @Column(name = "modification_window_hours", nullable = false)
+    private Integer modificationWindowHours = 0;
+
     @Builder.Default
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;

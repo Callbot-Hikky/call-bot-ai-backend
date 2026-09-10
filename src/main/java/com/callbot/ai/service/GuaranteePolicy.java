@@ -40,6 +40,12 @@ public class GuaranteePolicy {
         reservation.setGuaranteeMode(mode.code());
         // The diner has no account: cancelling later is only possible through this key.
         reservation.setCancellationToken(newToken());
+        // And changing their own covers or time, through this one. Both are handed out
+        // whatever the mode: neither is a privilege of a table that was paid for.
+        reservation.setModificationToken(newToken());
+        // Frozen with the rest, for the same reason: a restaurateur tightening the
+        // setting afterwards must not retract a promise already made.
+        reservation.setModificationWindowHours(restaurant.getModificationWindowHours());
 
         if (!mode.requiresGuarantee()) {
             reservation.setGuaranteeStatus(GuaranteeStatus.NOT_REQUIRED);

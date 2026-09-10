@@ -25,6 +25,7 @@ class GuaranteePolicyTest {
                 .bookingFeeCentsPerGuest(bookingFee)
                 .noShowPenaltyCentsPerGuest(penalty)
                 .refundWindowHours(48)
+                .modificationWindowHours(3)
                 .build();
     }
 
@@ -43,6 +44,42 @@ class GuaranteePolicyTest {
         assertThat(reservation.getGuaranteeAmountCents()).isNull();
         assertThat(reservation.getPaymentToken()).isNull();
         assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.PENDING);
+    }
+
+    @Test
+    void everyReservation_getsAModificationLinkAndTheWindowItWasSoldWith() {
+        // Even a free one: changing covers and time is not a privilege of paying tables.
+        Reservation reservation = reservation(2);
+
+        policy.applyOnCreation(reservation, restaurant(GuaranteeMode.NONE, null, null), null);
+
+        assertThat(reservation.getModificationToken()).isNotBlank();
+        assertThat(reservation.getModificationWindowHours()).isEqualTo(3);
+    }
+
+    @Test
+    void modificationToken_differsFromTheCancellationToken() {
+        // One link must never do the other's job.
+        Reservation reservation = reservation(2);
+
+        policy.applyOnCreation(reservation, restaurant(GuaranteeMode.BOOKING_FEE, 1500, null), null);
+
+        assertThat(reservation.getModificationToken())
+                .isNotEqualTo(reservation.getCancellationToken())
+                .isNotEqualTo(reservation.getPaymentToken());
+    }
+
+    @Test
+    void modificationWindow_isFrozenEvenWhenTheRestaurantAsksForNothing() {
+        // Frozen with the rest: a restaurateur tightening the setting afterwards must not
+        // retract a promise already made to a diner.
+        Reservation reservation = reservation(2);
+        Restaurant restaurant = restaurant(GuaranteeMode.NONE, null, null);
+        restaurant.setModificationWindowHours(12);
+
+        policy.applyOnCreation(reservation, restaurant, null);
+
+        assertThat(reservation.getModificationWindowHours()).isEqualTo(12);
     }
 
     @Test

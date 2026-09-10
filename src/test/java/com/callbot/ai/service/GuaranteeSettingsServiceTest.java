@@ -61,7 +61,7 @@ class GuaranteeSettingsServiceTest {
                 .when(connectAccount).requireAbleToCharge(restaurantId);
 
         assertThatThrownBy(() -> service.update(restaurantId,
-                new GuaranteeSettingsRequest("booking_fee", 1500, null, 24), OWNER))
+                new GuaranteeSettingsRequest("booking_fee", 1500, null, 24, null), OWNER))
                 .isInstanceOf(InvalidRequestException.class);
 
         verify(restaurantRepository, never()).save(any());
@@ -71,7 +71,7 @@ class GuaranteeSettingsServiceTest {
     void staysFreeWithoutAskingStripeAnything() {
         callerIsOwner();
 
-        service.update(restaurantId, new GuaranteeSettingsRequest("none", null, null, null), OWNER);
+        service.update(restaurantId, new GuaranteeSettingsRequest("none", null, null, null, null), OWNER);
 
         verify(connectAccount, never()).requireAbleToCharge(any());
     }
@@ -81,11 +81,37 @@ class GuaranteeSettingsServiceTest {
         callerIsOwner();
 
         GuaranteeSettingsResponse response = service.update(restaurantId,
-                new GuaranteeSettingsRequest("booking_fee", 1500, null, 24), OWNER);
+                new GuaranteeSettingsRequest("booking_fee", 1500, null, 24, null), OWNER);
 
         assertThat(response.mode()).isEqualTo("booking_fee");
         assertThat(response.bookingFeeCentsPerGuest()).isEqualTo(1500);
         assertThat(response.refundWindowHours()).isEqualTo(24);
+    }
+
+    @Test
+    void theTwoWindowsAreSetIndependently() {
+        // Handing money back and letting a diner move their table do not commit the
+        // dining room in the same way, so one is not derived from the other.
+        callerIsOwner();
+
+        GuaranteeSettingsResponse response = service.update(restaurantId,
+                new GuaranteeSettingsRequest("booking_fee", 1500, null, 24, 3), OWNER);
+
+        assertThat(response.refundWindowHours()).isEqualTo(24);
+        assertThat(response.modificationWindowHours()).isEqualTo(3);
+    }
+
+    @Test
+    void anOmittedModificationWindow_leavesTheOneAlreadySet() {
+        // Absent means "not touched", as it does for every other field here.
+        callerIsOwner();
+
+        service.update(restaurantId,
+                new GuaranteeSettingsRequest("booking_fee", 1500, null, 24, 3), OWNER);
+        GuaranteeSettingsResponse response = service.update(restaurantId,
+                new GuaranteeSettingsRequest("booking_fee", 1500, null, 24, null), OWNER);
+
+        assertThat(response.modificationWindowHours()).isEqualTo(3);
     }
 
     @Test
@@ -94,7 +120,7 @@ class GuaranteeSettingsServiceTest {
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
 
         assertThatThrownBy(() -> service.update(restaurantId,
-                new GuaranteeSettingsRequest("booking_fee", null, null, 48), OWNER))
+                new GuaranteeSettingsRequest("booking_fee", null, null, 48, null), OWNER))
                 .isInstanceOf(InvalidRequestException.class)
                 .hasMessageContaining("bookingFeeCentsPerGuest");
         verify(restaurantRepository, never()).save(any());
@@ -106,7 +132,7 @@ class GuaranteeSettingsServiceTest {
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
 
         assertThatThrownBy(() -> service.update(restaurantId,
-                new GuaranteeSettingsRequest("no_show", null, null, 48), OWNER))
+                new GuaranteeSettingsRequest("no_show", null, null, 48, null), OWNER))
                 .isInstanceOf(InvalidRequestException.class)
                 .hasMessageContaining("noShowPenaltyCentsPerGuest");
         verify(restaurantRepository, never()).save(any());
@@ -118,7 +144,7 @@ class GuaranteeSettingsServiceTest {
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
 
         assertThatThrownBy(() -> service.update(restaurantId,
-                new GuaranteeSettingsRequest("gratuit", null, null, 48), OWNER))
+                new GuaranteeSettingsRequest("gratuit", null, null, 48, null), OWNER))
                 .isInstanceOf(InvalidRequestException.class);
     }
 
@@ -127,7 +153,7 @@ class GuaranteeSettingsServiceTest {
         callerIsOwner();
 
         GuaranteeSettingsResponse response = service.update(restaurantId,
-                new GuaranteeSettingsRequest("none", null, null, null), OWNER);
+                new GuaranteeSettingsRequest("none", null, null, null, null), OWNER);
 
         assertThat(response.mode()).isEqualTo("none");
     }
@@ -147,7 +173,7 @@ class GuaranteeSettingsServiceTest {
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant()));
 
         assertThatThrownBy(() -> service.update(restaurantId,
-                new GuaranteeSettingsRequest("booking_fee", 1500, null, 48), INTRUDER))
+                new GuaranteeSettingsRequest("booking_fee", 1500, null, 48, null), INTRUDER))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(restaurantRepository, never()).save(any());
     }
