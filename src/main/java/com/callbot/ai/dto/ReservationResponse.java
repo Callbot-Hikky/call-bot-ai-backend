@@ -29,15 +29,28 @@ public record ReservationResponse(
         // Populated only via ?expand=table / ?expand=customer / ?expand=restaurant; omitted otherwise.
         @JsonInclude(JsonInclude.Include.NON_NULL) RestaurantTableResponse table,
         @JsonInclude(JsonInclude.Include.NON_NULL) CustomerResponse customer,
-        @JsonInclude(JsonInclude.Include.NON_NULL) RestaurantSummaryResponse restaurant) {
+        @JsonInclude(JsonInclude.Include.NON_NULL) RestaurantSummaryResponse restaurant,
+        // Present only while a rise in covers is waiting to be paid for.
+        @JsonInclude(JsonInclude.Include.NON_NULL) PendingTopUpResponse pendingTopUp) {
 
     public static ReservationResponse from(Reservation reservation) {
-        return from(reservation, null, null, null);
+        return from(reservation, null, null, null, null);
+    }
+
+    public static ReservationResponse from(Reservation reservation,
+            PendingTopUpResponse pendingTopUp) {
+        return from(reservation, null, null, null, pendingTopUp);
     }
 
     public static ReservationResponse from(Reservation reservation,
             RestaurantTableResponse table, CustomerResponse customer,
             RestaurantSummaryResponse restaurant) {
+        return from(reservation, table, customer, restaurant, null);
+    }
+
+    public static ReservationResponse from(Reservation reservation,
+            RestaurantTableResponse table, CustomerResponse customer,
+            RestaurantSummaryResponse restaurant, PendingTopUpResponse pendingTopUp) {
         return new ReservationResponse(
                 reservation.getId(),
                 reservation.getRestaurantId(),
@@ -60,6 +73,7 @@ public record ReservationResponse(
                 reservation.getCancelledAt(),
                 table,
                 customer,
-                restaurant);
+                restaurant,
+                pendingTopUp);
     }
 }

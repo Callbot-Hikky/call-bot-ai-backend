@@ -5,7 +5,7 @@ package com.callbot.ai.exception;
  *
  * <p>Carries a machine-readable {@link #getReason() reason} so the dashboard can tell
  * staff <em>why</em> the change was turned down rather than showing a silent failure:
- * a table that cannot seat the party and a fee that still has to be topped up call for
+ * a table that cannot seat the party and a top-up already awaiting settlement call for
  * two different next moves.
  */
 public class PartySizeChangeRejectedException extends RuntimeException {
@@ -13,8 +13,8 @@ public class PartySizeChangeRejectedException extends RuntimeException {
     /** No active table large enough is free over the reservation's slot. */
     public static final String NO_TABLE_AVAILABLE = "no_table_available";
 
-    /** The booking fee was priced per guest: the extra guests have to be paid for first. */
-    public static final String TOP_UP_REQUIRED = "top_up_required";
+    /** A top-up request is already running on this reservation, and only one may be. */
+    public static final String TOP_UP_PENDING = "top_up_pending";
 
     private final String reason;
 

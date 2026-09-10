@@ -1,6 +1,7 @@
 package com.callbot.ai.gateway.stripe;
 
 import java.util.Set;
+import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -135,33 +136,59 @@ public class StripeConnectGateway {
      * so the money is the restaurateur's from the outset.
      */
     public CheckoutSession createBookingFeeCheckout(BookingFeeCharge charge) {
+        return createConnectedCheckout(charge.reservationId(), charge.amountCents(),
+                charge.currency(), charge.applicationFeeCents(), charge.connectedAccountId(),
+                charge.customerEmail(),
+                "Frais de réservation — " + charge.restaurantName(),
+                "Ces frais ne sont pas déduits de l'addition.");
+    }
+
+    /**
+     * Collects the difference owed for guests added to an existing reservation.
+     *
+     * <p>The page says plainly that the larger party depends on a table still being free
+     * when the money lands: nothing was held while the diner made up their mind, and
+     * finding that out after paying would read as a bait and switch.
+     */
+    public CheckoutSession createPartySizeTopUpCheckout(PartySizeTopUpCharge charge) {
+        return createConnectedCheckout(charge.reservationId(), charge.amountCents(),
+                charge.currency(), charge.applicationFeeCents(), charge.connectedAccountId(),
+                charge.customerEmail(),
+                "Complément de couverts — " + charge.restaurantName(),
+                charge.extraGuests() + " couvert(s) supplémentaire(s), sous réserve d'une table "
+                        + "disponible au moment du règlement.");
+    }
+
+    private CheckoutSession createConnectedCheckout(UUID reservationId, int amountCents,
+            String currency, int applicationFeeCents, String connectedAccountId,
+            String customerEmail, String productName, String productDescription) {
         requireKey();
         SessionCreateParams.Builder params = SessionCreateParams.builder()
                 .setMode(SessionCreateParams.Mode.PAYMENT)
                 .setSuccessUrl(connect.successUrl())
                 .setCancelUrl(connect.cancelUrl())
-                .putMetadata(RESERVATION_METADATA_KEY, charge.reservationId().toString())
+                .putMetadata(RESERVATION_METADATA_KEY, reservationId.toString())
                 .addLineItem(SessionCreateParams.LineItem.builder()
                         .setQuantity(1L)
                         .setPriceData(SessionCreateParams.LineItem.PriceData.builder()
-                                .setCurrency(charge.currency())
-                                .setUnitAmount((long) charge.amountCents())
+                                .setCurrency(currency)
+                                .setUnitAmount((long) amountCents)
                                 .setProductData(SessionCreateParams.LineItem.PriceData.ProductData.builder()
-                                        .setName("Frais de réservation — " + charge.restaurantName())
-                                        .setDescription("Ces frais ne sont pas déduits de l'addition.")
+                                        .setName(productName)
+                                        .setDescription(productDescription)
                                         .build())
                                 .build())
                         .build())
                 .setPaymentIntentData(SessionCreateParams.PaymentIntentData.builder()
-                        .setApplicationFeeAmount((long) charge.applicationFeeCents())
+                        .setApplicationFeeAmount((long) applicationFeeCents)
                         .setTransferData(SessionCreateParams.PaymentIntentData.TransferData.builder()
-                                .setDestination(charge.connectedAccountId())
+                                .setDestination(connectedAccountId)
                                 .build())
-                        .putMetadata(RESERVATION_METADATA_KEY, charge.reservationId().toString())
+                        .putMetadata(RESERVATION_METADATA_KEY, reservationId.toString())
                         .build());
 
-        if (charge.customerEmail() != null && !charge.customerEmail().isBlank()) {
-            params.setCustomerEmail(charge.customerEmail());
+        if (customerEmail != null && !customerEmail.isBlank()) {
+            params.setCustomerEmail(customerEmail);
         }
 
         try {

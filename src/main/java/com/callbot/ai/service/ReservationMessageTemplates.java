@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import com.callbot.ai.config.FrontendProperties;
 import com.callbot.ai.model.Customer;
 import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.ReservationCharge;
 import com.callbot.ai.model.Restaurant;
 
 @Component
@@ -280,6 +281,62 @@ public class ReservationMessageTemplates {
                         formatPhoneLink(restaurant.getPhoneNumber()));
     }
 
+    /**
+     * Message 7: the party grew, and the extra guests have to be paid for.
+     *
+     * <p>Says the two things that would otherwise be discovered too late: the booking has
+     * <em>not</em> changed yet, and the larger party depends on a table still being free
+     * when the money lands. Nothing is held in the meantime, and a message that implied
+     * otherwise would be selling a table twice.
+     */
+    public String forClientPartySizeTopUp(Reservation reservation, ReservationCharge topUp,
+            Customer customer, Restaurant restaurant) {
+        int extraGuests = topUp.getTargetPartySize() - reservation.getPartySize();
+        return """
+                %s,
+                Vous souhaitez passer à **%d couverts** chez **%s** ⏳
+
+                **Date** : %s
+                **Réservation actuelle** : %d couverts
+                **Complément à régler** : %s pour %d couvert(s) supplémentaire(s)
+
+                Votre réservation reste confirmée à %d couverts tant que le complément
+                n'est pas réglé. Le passage à %d couverts est **subordonné à une table
+                disponible au moment du paiement**.
+
+                👉 [Régler le complément](%s)
+
+                -# Ce lien n'est valable que %d minutes."""
+                .formatted(greeting(customer), topUp.getTargetPartySize(), restaurant.getName(),
+                        formatDateTime(reservation.getStartsAt(), restaurant.getTimezone()),
+                        reservation.getPartySize(),
+                        formatAmount(topUp.getAmountCents(), topUp.getCurrency()),
+                        extraGuests,
+                        reservation.getPartySize(),
+                        topUp.getTargetPartySize(),
+                        buildTopUpLink(topUp),
+                        PartySizeTopUpService.SETTLEMENT_WINDOW.toMinutes());
+    }
+
+    public String forRestaurantPartySizeTopUp(Reservation reservation, ReservationCharge topUp,
+            Customer customer, Restaurant restaurant) {
+        return """
+                **Complément de couverts demandé** ⏳
+
+                **Client** : %s
+                **Date** : %s
+                **Couverts** : %d → %d (non appliqué)
+                **Complément** : %s
+
+                La réservation reste à %d couverts sur sa table actuelle. Aucune table
+                n'est tenue pour la hausse : elle sera revérifiée au règlement."""
+                .formatted(formatCustomerIdentity(customer),
+                        formatDateTime(reservation.getStartsAt(), restaurant.getTimezone()),
+                        reservation.getPartySize(), topUp.getTargetPartySize(),
+                        formatAmount(topUp.getAmountCents(), topUp.getCurrency()),
+                        reservation.getPartySize());
+    }
+
     public String forRestaurantPenaltyCharged(Reservation reservation, Customer customer,
             Restaurant restaurant) {
         return """
@@ -347,6 +404,10 @@ public class ReservationMessageTemplates {
         }
         String symbol = "eur".equalsIgnoreCase(currency) ? "€" : currency;
         return String.format(Locale.FRENCH, "%.2f %s", amountCents / 100.0, symbol);
+    }
+
+    private String buildTopUpLink(ReservationCharge topUp) {
+        return baseUrl() + "/client/reservations/complement/" + topUp.getPaymentToken();
     }
 
     private String buildPaymentLink(Reservation reservation) {

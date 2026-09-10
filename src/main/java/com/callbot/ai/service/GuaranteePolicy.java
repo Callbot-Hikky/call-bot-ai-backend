@@ -46,7 +46,12 @@ public class GuaranteePolicy {
             return;
         }
 
-        reservation.setGuaranteeAmountCents(amountFor(mode, restaurant, reservation.getPartySize()));
+        int perGuest = perGuestFor(mode, restaurant);
+        // Both are frozen: the unit price, because a top-up for extra guests is priced
+        // off it long after the restaurateur may have changed their settings, and the
+        // total, because it is what the diner was told to pay.
+        reservation.setGuaranteeCentsPerGuest(perGuest);
+        reservation.setGuaranteeAmountCents(perGuest * requirePartySize(reservation));
         // Frozen alongside the amount: the window is half of what was promised to the
         // diner, and a restaurateur shortening it must not shorten it for them.
         reservation.setGuaranteeRefundWindowHours(restaurant.getRefundWindowHours());
@@ -64,7 +69,7 @@ public class GuaranteePolicy {
     }
 
     /** The damage a no-show causes grows with the party, so amounts are per guest. */
-    private int amountFor(GuaranteeMode mode, Restaurant restaurant, Integer partySize) {
+    private int perGuestFor(GuaranteeMode mode, Restaurant restaurant) {
         Integer perGuest = mode == GuaranteeMode.BOOKING_FEE
                 ? restaurant.getBookingFeeCentsPerGuest()
                 : restaurant.getNoShowPenaltyCentsPerGuest();
@@ -73,12 +78,17 @@ public class GuaranteePolicy {
             throw new IllegalStateException(
                     "Restaurant " + restaurant.getId() + " is in mode " + mode.code() + " without an amount");
         }
+        return perGuest;
+    }
+
+    private int requirePartySize(Reservation reservation) {
+        Integer partySize = reservation.getPartySize();
         if (partySize == null || partySize <= 0) {
             // Both entry points validate this, so reaching here means a caller bypassed
             // validation. Charging for one guest would silently undercharge the table.
             throw new IllegalStateException("Cannot price a guarantee without a party size");
         }
-        return perGuest * partySize;
+        return partySize;
     }
 
     private static String newToken() {

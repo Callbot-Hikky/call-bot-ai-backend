@@ -26,6 +26,21 @@ le client à se dédire en abandonnant la somme, et obligeraient le restaurateur
 Remboursé intégralement si le client se désiste au-delà d'un délai fixé avant le service.
 En deçà de ce délai, la somme reste acquise au restaurateur.
 
+## Complément de couverts
+
+Somme due quand une tablée grandit sur une réservation dont les frais de réservation
+ont été tarifés **par couvert** : (M − N) couverts × le **montant figé à la création**.
+
+Ce montant unitaire est figé avec le mode : un restaurateur qui change son tarif ensuite
+ne retarife jamais une table déjà vendue.
+
+Tant qu'il n'est pas réglé, **rien ne bouge** : la réservation reste à N couverts, sur sa
+table, confirmée. Aucune table n'est tenue pour la hausse — la disponibilité constatée au
+moment de la demande sera **revérifiée au règlement**, et le client en est averti.
+
+Une seule demande à la fois par réservation : deux liens vivants seraient chacun payables
+pour une même table.
+
 ## Garantie no-show
 
 Engagement de payer une pénalité en cas d'absence non annulée. Aucune somme n'est
@@ -102,7 +117,7 @@ son identifiant Stripe et son statut — *en attente*, *réglé*, *remboursé*.
 
 Une réservation en porte **zéro, un ou plusieurs**. Zéro quand elle ne doit rien ; un
 pour des frais de réservation ou une pénalité no-show ; plusieurs dès qu'une tablée
-grandit et que le complément est réglé à part. C'est le **registre** : l'argent
+grandit et que le **complément de couverts** est encaissé à part. C'est le **registre** : l'argent
 n'appartient pas à la réservation, il y est rattaché.
 
 Un remboursement rend **chaque** encaissement réglé, jamais seulement le premier. Un
@@ -127,6 +142,9 @@ pour agir sur sa réservation : il a réservé par téléphone et n'a pas de com
 Il en existe deux, distincts :
 
 - le **lien de paiement**, valable le temps de la fenêtre de paiement et à usage unique ;
+- le **lien de complément**, émis quand une tablée grandit : neuf, distinct du précédent,
+  à usage unique, valable 30 minutes. Le lien de paiement initial ne règle jamais un
+  complément, et réciproquement ;
 - le **lien d'annulation**, qui survit au règlement — c'est justement après avoir payé
   qu'on peut avoir besoin d'annuler.
 
