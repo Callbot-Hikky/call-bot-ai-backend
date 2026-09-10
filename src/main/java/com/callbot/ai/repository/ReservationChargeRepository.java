@@ -86,6 +86,22 @@ public interface ReservationChargeRepository extends JpaRepository<ReservationCh
     List<ReservationCharge> lockDuePayoutsFor(@Param("restaurantId") UUID restaurantId,
             @Param("paid") String paid, @Param("now") OffsetDateTime now);
 
+    /**
+     * Top-up requests whose settlement window has closed and which nobody paid.
+     *
+     * <p>Rows are locked and already-locked ones skipped, so several application
+     * instances can run the sweep at once without closing the same request twice — which
+     * would send the diner two "it fell through" messages.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
+    @Query("""
+            SELECT c FROM ReservationCharge c
+            WHERE c.kind = :kind AND c.status = :status AND c.tokenExpiresAt < :deadline
+            """)
+    List<ReservationCharge> lockExpiredTopUps(@Param("kind") String kind,
+            @Param("status") String status, @Param("deadline") OffsetDateTime deadline);
+
     /** The charges a payout claimed, so a refused transfer can release them. */
     List<ReservationCharge> findByPayoutId(UUID payoutId);
 

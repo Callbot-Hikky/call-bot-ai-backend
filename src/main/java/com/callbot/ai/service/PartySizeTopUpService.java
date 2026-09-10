@@ -4,6 +4,7 @@ import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.Base64;
+import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,7 +27,11 @@ import com.callbot.ai.model.Commission;
 import com.callbot.ai.model.Customer;
 import com.callbot.ai.model.Reservation;
 import com.callbot.ai.model.ReservationCharge;
+import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.model.Restaurant;
+import com.callbot.ai.model.RestaurantTable;
+import com.callbot.ai.notification.ReservationTopUpAppliedEvent;
+import com.callbot.ai.notification.ReservationTopUpRefundedEvent;
 import com.callbot.ai.notification.ReservationTopUpRequestedEvent;
 import com.callbot.ai.repository.CustomerRepository;
 import com.callbot.ai.repository.ReservationChargeRepository;
@@ -66,6 +71,7 @@ public class PartySizeTopUpService {
     private final RestaurantRepository restaurantRepository;
     private final CustomerRepository customerRepository;
     private final StripeConnectGateway connect;
+    private final TableAvailability availability;
     private final ApplicationEventPublisher events;
 
     /**
@@ -150,18 +156,29 @@ public class PartySizeTopUpService {
     }
 
     /**
-     * Records that the money for a top-up arrived.
+     * Settles a top-up Stripe says was paid: the money in, then the covers, or the money
+     * straight back out.
      *
-     * <p>Only the money is recorded here. Whether the larger party can actually be
-     * seated is asked again at that point, and answering it — moving the reservation, or
-     * handing the money straight back when no table is left — is the next piece of work.
-     * The register is right either way: money that came in belongs in it.
+     * <p>The register is written first and unconditionally. Money that came in belongs
+     * in it whatever happens next, and a refund is itself a movement that needs something
+     * to be a movement <em>of</em>.
+     *
+     * <p>Then the question nobody could answer thirty minutes ago. Nothing was held while
+     * the diner made up their mind — that is the whole bargain of not blocking a table
+     * for an unpaid request — so the room is asked again, now, for the party they have
+     * just bought. A table can seat them: the reservation moves onto it at its new size.
+     * None can: the difference goes back in full and the booking they already had is left
+     * exactly as it stands. What is never done is keep the money for guests the room
+     * cannot take.
      */
-    public void markPaid(ReservationCharge charge, String paymentIntentId) {
-        if (charge.isPaid()) {
+    public void settle(ReservationCharge charge, String paymentIntentId) {
+        if (charge.isPaid() || charge.isRefunded()) {
             // Stripe retries until it gets a 2xx and may deliver the same event twice.
             return;
         }
+        // Read before the status is overwritten: a request that had already lapsed is
+        // paid money with nothing left to buy, whatever the room happens to look like.
+        boolean stillStood = charge.isPending();
         Reservation reservation = reservationOf(charge);
 
         charge.setStatus(ChargeStatus.PAID);
@@ -173,8 +190,105 @@ public class PartySizeTopUpService {
         charge.setPaymentToken(null);
         charges.save(charge);
 
-        log.info("Top-up {} settled on reservation {}: {} covers awaiting a table",
-                charge.getId(), reservation.getId(), charge.getTargetPartySize());
+        RestaurantTable seating = stillStood ? seatingFor(reservation, charge) : null;
+        if (seating == null) {
+            handBack(charge, reservation, stillStood);
+            return;
+        }
+
+        reservation.setPartySize(charge.getTargetPartySize());
+        reservation.setTableId(seating.getId());
+        reservationRepository.save(reservation);
+
+        log.info("Top-up {} settled on reservation {}: {} covers seated on table {}",
+                charge.getId(), reservation.getId(), charge.getTargetPartySize(), seating.getId());
+        events.publishEvent(
+                new ReservationTopUpAppliedEvent(reservation.getId(), charge.getId()));
+    }
+
+    /**
+     * A table for the party this top-up bought, or {@code null}.
+     *
+     * <p>A cancelled reservation has none by definition: there is no service to seat
+     * anyone at, and a free table proves nothing about a booking nobody will honour.
+     */
+    private RestaurantTable seatingFor(Reservation reservation, ReservationCharge charge) {
+        if (ReservationStatus.CANCELLED.equals(reservation.getStatus())) {
+            return null;
+        }
+        return availability.firstSeating(reservation.getRestaurantId(),
+                charge.getTargetPartySize(), reservation.getStartsAt(), reservation.getEndsAt(),
+                reservation.getId());
+    }
+
+    /**
+     * Returns the whole of a top-up that bought nothing.
+     *
+     * <p>In full, never a share: the diner is not being penalised, they are being told
+     * the rise could not happen. Alloquence's commission goes back with it, as on any
+     * refund — there is no service to have earned it on.
+     */
+    private void handBack(ReservationCharge charge, Reservation reservation, boolean stillStood) {
+        // Keyed on the charge, so a redelivered event cannot give the same money back twice.
+        connect.refundFully(charge.getStripePaymentIntentId(), "top-up-" + charge.getId());
+
+        charge.setStatus(ChargeStatus.REFUNDED);
+        charge.setRefundedAt(OffsetDateTime.now());
+        charge.setRefundedAmountCents(charge.getAmountCents());
+        // Refunded money never leaves for the restaurateur's bank.
+        charge.setPayoutEligibleAt(null);
+        charges.save(charge);
+
+        log.warn("Top-up {} on reservation {} was paid but {}; {} cents refunded",
+                charge.getId(), reservation.getId(),
+                stillStood ? "no table could seat the party" : "the request had already lapsed",
+                charge.getAmountCents());
+        events.publishEvent(
+                new ReservationTopUpRefundedEvent(reservation.getId(), charge.getId()));
+    }
+
+    /**
+     * Ends the request outstanding on a reservation, when one is.
+     *
+     * <p>Called wherever the thing a request was priced against stops standing: the
+     * window closes, the reservation is cancelled underneath it, the party is revised
+     * down. All three leave a live link asking for money that buys nothing, and the
+     * partial index tolerating one pending request per reservation would otherwise
+     * refuse every later rise for ever.
+     *
+     * <p>Nothing is announced here. The caller knows why it ended and whether that is
+     * news the diner needs; a lapse in itself is not.
+     *
+     * @return whether there was a request to end
+     */
+    public boolean lapsePendingFor(UUID reservationId, String why) {
+        return charges.findByReservationIdAndKindAndStatus(
+                        reservationId, ChargeKind.PARTY_SIZE_TOP_UP, ChargeStatus.PENDING)
+                .map(charge -> {
+                    lapse(charge, why);
+                    return true;
+                })
+                .orElse(false);
+    }
+
+    /**
+     * Marks one request ended, and closes the page that was collecting it.
+     *
+     * <p>The token is deliberately left in place. It no longer opens anything —
+     * {@link ReservationCharge#isOpenFor} refuses a request that is not pending — but a
+     * diner following their link deserves a page saying the request is closed rather than
+     * one saying the link never existed.
+     */
+    void lapse(ReservationCharge charge, String why) {
+        // Closed at Stripe too: a session left live is a session that can still be paid,
+        // and the money would have to be handed back.
+        connect.expireCheckout(charge.getStripeSessionId());
+
+        charge.setStatus(ChargeStatus.LAPSED);
+        charges.save(charge);
+
+        log.info("Top-up {} on reservation {} lapsed: {}",
+                charge.getId(), charge.getReservationId(), why);
     }
 
     /**

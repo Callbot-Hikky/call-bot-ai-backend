@@ -30,6 +30,8 @@ class GuaranteeExpiryJobTest {
     @Mock
     private ReservationRepository reservationRepository;
     @Mock
+    private PartySizeTopUpService topUps;
+    @Mock
     private ApplicationEventPublisher events;
     @InjectMocks
     private GuaranteeExpiryJob job;
@@ -72,6 +74,18 @@ class GuaranteeExpiryJobTest {
         verify(events).publishEvent(event.capture());
         assertThat(event.getValue())
                 .isEqualTo(new ReservationGuaranteeExpiredEvent(reservation.getId()));
+    }
+
+    @Test
+    void endsAnyRequestRidingOnTheReleasedReservation() {
+        // Rare — it takes a rise asked for on a hold — but the link would otherwise stay
+        // payable on a reservation whose table has gone back on sale.
+        Reservation reservation = expiredHold();
+        when(reservationRepository.lockExpiredHolds(any(), any())).thenReturn(List.of(reservation));
+
+        job.releaseExpiredHolds();
+
+        verify(topUps).lapsePendingFor(reservation.getId(), "the reservation's hold expired");
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.callbot.ai.notification;
 
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.BiConsumer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -159,17 +160,67 @@ public class ReservationNotificationListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public void onTopUpRequested(ReservationTopUpRequestedEvent event) {
-        ReservationCharge topUp = charges.findById(event.chargeId()).orElse(null);
+        onTopUp(event.reservationId(), event.chargeId(), "top-up requested",
+                (context, topUp) -> {
+                    discord.sendClientSmsMessage(templates.forClientPartySizeTopUp(
+                            context.reservation(), topUp, context.customer(), context.restaurant()));
+                    discord.sendReservationMessage(templates.forRestaurantPartySizeTopUp(
+                            context.reservation(), topUp, context.customer(), context.restaurant()));
+                });
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onTopUpApplied(ReservationTopUpAppliedEvent event) {
+        onTopUp(event.reservationId(), event.chargeId(), "top-up applied",
+                (context, topUp) -> {
+                    discord.sendClientSmsMessage(templates.forClientPartySizeTopUpApplied(
+                            context.reservation(), topUp, context.customer(), context.restaurant()));
+                    discord.sendReservationMessage(templates.forRestaurantPartySizeTopUpApplied(
+                            context.reservation(), topUp, context.customer(), context.restaurant()));
+                });
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onTopUpRefunded(ReservationTopUpRefundedEvent event) {
+        onTopUp(event.reservationId(), event.chargeId(), "top-up refunded",
+                (context, topUp) -> {
+                    discord.sendClientSmsMessage(templates.forClientPartySizeTopUpRefunded(
+                            context.reservation(), topUp, context.customer(), context.restaurant()));
+                    discord.sendReservationMessage(templates.forRestaurantPartySizeTopUpRefunded(
+                            context.reservation(), topUp, context.customer(), context.restaurant()));
+                });
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onTopUpExpired(ReservationTopUpExpiredEvent event) {
+        onTopUp(event.reservationId(), event.chargeId(), "top-up expired",
+                (context, topUp) -> {
+                    discord.sendClientSmsMessage(templates.forClientPartySizeTopUpExpired(
+                            context.reservation(), topUp, context.customer(), context.restaurant()));
+                    discord.sendReservationMessage(templates.forRestaurantPartySizeTopUpExpired(
+                            context.reservation(), topUp, context.customer(), context.restaurant()));
+                });
+    }
+
+    /**
+     * The rows every top-up message needs: the three of a reservation, plus the charge
+     * the news is actually about.
+     *
+     * <p>The charge is fetched by the id the event carried, never as "the reservation's
+     * top-up": by the time a message goes out the request it announces may no longer be
+     * the current one, and the diner would be told the wrong amount.
+     */
+    private void onTopUp(UUID reservationId, UUID chargeId, String what,
+            BiConsumer<Context, ReservationCharge> send) {
+        ReservationCharge topUp = charges.findById(chargeId).orElse(null);
         if (topUp == null) {
-            log.warn("Top-up {} not found when handling its request event", event.chargeId());
+            log.warn("Top-up {} not found when handling its {} event", chargeId, what);
             return;
         }
-        contextFor(event.reservationId(), "top-up requested").ifPresent(context -> {
-            discord.sendClientSmsMessage(templates.forClientPartySizeTopUp(
-                    context.reservation(), topUp, context.customer(), context.restaurant()));
-            discord.sendReservationMessage(templates.forRestaurantPartySizeTopUp(
-                    context.reservation(), topUp, context.customer(), context.restaurant()));
-        });
+        contextFor(reservationId, what).ifPresent(context -> send.accept(context, topUp));
     }
 
     private Optional<Context> contextFor(UUID reservationId, String what) {

@@ -3,6 +3,7 @@ package com.callbot.ai.integration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -31,8 +32,10 @@ import com.callbot.ai.model.ChargeKind;
 import com.callbot.ai.model.ChargeStatus;
 import com.callbot.ai.model.Reservation;
 import com.callbot.ai.model.ReservationCharge;
+import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.repository.ReservationRepository;
+import com.callbot.ai.service.PartySizeTopUpExpiryJob;
 import com.callbot.ai.support.AbstractIntegrationTest;
 import com.jayway.jsonpath.JsonPath;
 
@@ -56,12 +59,16 @@ class PartySizeTopUpIntegrationTest extends AbstractIntegrationTest {
     private StripeConnectGateway connect;
     @MockitoBean
     private StripeConnectWebhookParser webhookParser;
+    @Autowired
+    private PartySizeTopUpExpiryJob expiryJob;
 
     private String token;
     private String restaurantId;
     private String account;
     /** Stripe ids are unique in the schema, and the container keeps rows between tests. */
     private String stripeSuffix;
+    /** The only table that can seat a party bigger than two. */
+    private String bigTableId;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -85,7 +92,7 @@ class PartySizeTopUpIntegrationTest extends AbstractIntegrationTest {
         setBookingFeeMode(1500, 24);
         // Two tables: one seats the party as sold, one is large enough for the rise.
         createTable("T1", 2);
-        createTable("T2", 8);
+        bigTableId = createTable("T2", 8);
     }
 
     @Test
@@ -255,7 +262,149 @@ class PartySizeTopUpIntegrationTest extends AbstractIntegrationTest {
                 .isPresent();
     }
 
+    @Test
+    void settlingWithATableFreeMovesThePartyOntoIt() throws Exception {
+        String reservationId = paidReservationFor(2);
+        mockMvc.perform(raiseTo(reservationId, 5)).andExpect(status().isOk());
+
+        settleTheTopUp(reservationId);
+
+        Reservation reservation = reservation(reservationId);
+        assertThat(reservation.getPartySize()).isEqualTo(5);
+        assertThat(reservation.getTableId()).isEqualTo(UUID.fromString(bigTableId));
+        assertThat(topUpOf(reservationId).getStatus()).isEqualTo(ChargeStatus.PAID);
+    }
+
+    @Test
+    void settlingWithNoTableLeftHandsTheMoneyBackAndLeavesTheBookingAlone() throws Exception {
+        // The price of holding nothing for thirty minutes: the only table that could
+        // seat five is taken while the diner is on the payment page.
+        String reservationId = paidReservationFor(2);
+        mockMvc.perform(raiseTo(reservationId, 5)).andExpect(status().isOk());
+        UUID tableAsSold = reservation(reservationId).getTableId();
+        occupyTheBigTable();
+
+        settleTheTopUp(reservationId);
+
+        ReservationCharge topUp = topUpOf(reservationId);
+        assertThat(topUp.getStatus()).isEqualTo(ChargeStatus.REFUNDED);
+        assertThat(topUp.getRefundedAmountCents()).isEqualTo(4500);
+        // Nothing of it will ever leave for the restaurateur's bank.
+        assertThat(topUp.getPayoutEligibleAt()).isNull();
+
+        Reservation reservation = reservation(reservationId);
+        assertThat(reservation.getPartySize()).isEqualTo(2);
+        assertThat(reservation.getTableId()).isEqualTo(tableAsSold);
+    }
+
+    @Test
+    void anUnsettledTopUpLapsesOnceItsWindowCloses() throws Exception {
+        String reservationId = paidReservationFor(2);
+        mockMvc.perform(raiseTo(reservationId, 5)).andExpect(status().isOk());
+        windowClosedOn(reservationId);
+
+        expiryJob.lapseExpiredTopUps();
+
+        assertThat(topUpOf(reservationId).getStatus()).isEqualTo(ChargeStatus.LAPSED);
+        // The booking never moved, and still has not.
+        Reservation reservation = reservation(reservationId);
+        assertThat(reservation.getPartySize()).isEqualTo(2);
+        assertThat(reservation.getStatus()).isEqualTo(ReservationStatus.CONFIRMED);
+    }
+
+    @Test
+    void aRiseIsPossibleAgainOnceTheFirstRequestHasLapsed() throws Exception {
+        // The partial index tolerates one pending request per reservation. A request left
+        // pending for ever would refuse every later rise, which is the real cost of not
+        // closing them.
+        String reservationId = paidReservationFor(2);
+        mockMvc.perform(raiseTo(reservationId, 5)).andExpect(status().isOk());
+        windowClosedOn(reservationId);
+        expiryJob.lapseExpiredTopUps();
+
+        mockMvc.perform(raiseTo(reservationId, 6))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pendingTopUp.targetPartySize").value(6));
+
+        assertThat(topUpsOf(reservationId)).hasSize(2);
+    }
+
+    @Test
+    void cancellingTheReservationEndsTheRequestRidingOnIt() throws Exception {
+        String reservationId = paidReservationFor(2);
+        mockMvc.perform(raiseTo(reservationId, 5)).andExpect(status().isOk());
+
+        mockMvc.perform(delete("/api/reservations/" + reservationId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNoContent());
+
+        assertThat(topUpOf(reservationId).getStatus()).isEqualTo(ChargeStatus.LAPSED);
+    }
+
+    @Test
+    void loweringThePartyLeavesNoOrphanedRequestBehind() throws Exception {
+        // The request priced three extra guests against a party of two. Take the party
+        // to one and the live link asks for a difference nobody has requested.
+        String reservationId = paidReservationFor(2);
+        mockMvc.perform(raiseTo(reservationId, 5)).andExpect(status().isOk());
+
+        mockMvc.perform(raiseTo(reservationId, 1))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.partySize").value(1))
+                .andExpect(jsonPath("$.pendingTopUp").doesNotExist());
+
+        assertThat(topUpOf(reservationId).getStatus()).isEqualTo(ChargeStatus.LAPSED);
+    }
+
+    @Test
+    void aLapsedLinkStillExplainsItselfRatherThanVanishing() throws Exception {
+        String reservationId = paidReservationFor(2);
+        mockMvc.perform(raiseTo(reservationId, 5)).andExpect(status().isOk());
+        String lapsedLink = topUpOf(reservationId).getPaymentToken();
+        windowClosedOn(reservationId);
+        expiryJob.lapseExpiredTopUps();
+
+        mockMvc.perform(get("/api/public/reservations/complement/" + lapsedLink))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("closed"));
+
+        // And it opens nothing.
+        mockMvc.perform(post("/api/public/reservations/complement/" + lapsedLink + "/checkout"))
+                .andExpect(status().isBadRequest());
+    }
+
     // --- helpers ------------------------------------------------------------
+
+    /** Walks the diner all the way through Stripe: checkout opened, then paid. */
+    private void settleTheTopUp(String reservationId) throws Exception {
+        when(connect.createPartySizeTopUpCheckout(any()))
+                .thenReturn(new CheckoutSession(topUpSession(), "https://stripe.test/cs_topup"));
+        mockMvc.perform(post("/api/public/reservations/complement/"
+                        + topUpOf(reservationId).getPaymentToken() + "/checkout"))
+                .andExpect(status().isOk());
+
+        webhookSays(new ConnectWebhookEvent.ReservationPaid(
+                UUID.fromString(reservationId), topUpSession(), "pi_topup_" + stripeSuffix, 4500));
+    }
+
+    /** Someone else takes the only table big enough, over the same slot. */
+    private void occupyTheBigTable() throws Exception {
+        mockMvc.perform(post("/api/reservations")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"restaurantId":"%s","tableId":"%s","startsAt":"2030-07-01T19:00:00Z",\
+                                "endsAt":"2030-07-01T21:00:00Z","partySize":8}"""
+                                .formatted(restaurantId, bigTableId)))
+                .andExpect(status().isCreated());
+    }
+
+    /** Winds the deadline back rather than waiting half an hour for it. */
+    private void windowClosedOn(String reservationId) {
+        ReservationCharge topUp = topUpOf(reservationId);
+        topUp.setTokenExpiresAt(OffsetDateTime.now().minusMinutes(1));
+        charges.save(topUp);
+    }
 
     private org.springframework.test.web.servlet.RequestBuilder raiseTo(String reservationId,
             int partySize) {
@@ -315,14 +464,16 @@ class PartySizeTopUpIntegrationTest extends AbstractIntegrationTest {
         return reservationRepository.findById(UUID.fromString(reservationId)).orElseThrow();
     }
 
-    private void createTable(String name, int capacity) throws Exception {
-        mockMvc.perform(post("/api/tables")
+    private String createTable(String name, int capacity) throws Exception {
+        String response = mockMvc.perform(post("/api/tables")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"restaurantId":"%s","name":"%s","capacity":%d}"""
                                 .formatted(restaurantId, name, capacity)))
-                .andExpect(status().isCreated());
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return JsonPath.read(response, "$.id");
     }
 
     private void completeOnboarding() throws Exception {

@@ -133,6 +133,14 @@ public class ReservationCharge {
         return ChargeStatus.PAID.equals(status);
     }
 
+    public boolean isPending() {
+        return ChargeStatus.PENDING.equals(status);
+    }
+
+    public boolean isRefunded() {
+        return ChargeStatus.REFUNDED.equals(status);
+    }
+
     public boolean isBookingFee() {
         return ChargeKind.BOOKING_FEE.equals(kind);
     }
@@ -141,9 +149,9 @@ public class ReservationCharge {
         return ChargeKind.PARTY_SIZE_TOP_UP.equals(kind);
     }
 
-    /** Whether this top-up can still be settled: nothing paid yet, and time left. */
+    /** Whether this top-up can still be settled: still standing, and time left. */
     public boolean isOpenFor(OffsetDateTime now) {
-        return ChargeStatus.PENDING.equals(status)
+        return isPending()
                 && tokenExpiresAt != null
                 && tokenExpiresAt.isAfter(now);
     }

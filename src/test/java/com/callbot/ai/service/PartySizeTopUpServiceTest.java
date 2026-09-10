@@ -3,6 +3,7 @@ package com.callbot.ai.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -36,6 +37,9 @@ import com.callbot.ai.model.Reservation;
 import com.callbot.ai.model.ReservationCharge;
 import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.model.Restaurant;
+import com.callbot.ai.model.RestaurantTable;
+import com.callbot.ai.notification.ReservationTopUpAppliedEvent;
+import com.callbot.ai.notification.ReservationTopUpRefundedEvent;
 import com.callbot.ai.notification.ReservationTopUpRequestedEvent;
 import com.callbot.ai.repository.CustomerRepository;
 import com.callbot.ai.repository.ReservationChargeRepository;
@@ -56,12 +60,15 @@ class PartySizeTopUpServiceTest {
     @Mock
     private StripeConnectGateway connect;
     @Mock
+    private TableAvailability availability;
+    @Mock
     private ApplicationEventPublisher events;
     @InjectMocks
     private PartySizeTopUpService topUps;
 
     private final UUID reservationId = UUID.randomUUID();
     private final UUID restaurantId = UUID.randomUUID();
+    private final UUID ownTableId = UUID.randomUUID();
 
     private static final OffsetDateTime STARTS_AT = OffsetDateTime.parse("2030-01-01T19:00:00Z");
     private static final OffsetDateTime ENDS_AT = OffsetDateTime.parse("2030-01-01T21:00:00Z");
@@ -73,6 +80,7 @@ class PartySizeTopUpServiceTest {
                 .restaurantId(restaurantId)
                 .startsAt(STARTS_AT)
                 .endsAt(ENDS_AT)
+                .tableId(ownTableId)
                 .partySize(2)
                 .status(ReservationStatus.CONFIRMED)
                 .guaranteeMode(GuaranteeMode.BOOKING_FEE.code())
@@ -265,11 +273,12 @@ class PartySizeTopUpServiceTest {
     }
 
     @Test
-    void markPaid_recordsTheMoneyAndBurnsTheLink() {
+    void settle_recordsTheMoneyAndBurnsTheLink() {
         ReservationCharge charge = pendingTopUp(OffsetDateTime.now().plusMinutes(20));
-        when(reservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation()));
+        reservationIs(reservation());
+        seatingIs(aTable());
 
-        topUps.markPaid(charge, "pi_123");
+        topUps.settle(charge, "pi_123");
 
         assertThat(charge.getStatus()).isEqualTo(ChargeStatus.PAID);
         assertThat(charge.getStripePaymentIntentId()).isEqualTo("pi_123");
@@ -279,15 +288,173 @@ class PartySizeTopUpServiceTest {
     }
 
     @Test
-    void markPaid_whenStripeRedeliversTheSameEvent_changesNothing() {
+    void settle_whenATableIsFree_movesThePartyOntoIt() {
+        ReservationCharge charge = pendingTopUp(OffsetDateTime.now().plusMinutes(20));
+        Reservation reservation = reservation();
+        reservationIs(reservation);
+        RestaurantTable seating = aTable();
+        seatingIs(seating);
+
+        topUps.settle(charge, "pi_123");
+
+        assertThat(reservation.getPartySize()).isEqualTo(5);
+        assertThat(reservation.getTableId()).isEqualTo(seating.getId());
+        verify(reservationRepository).save(reservation);
+        verify(events).publishEvent(
+                new ReservationTopUpAppliedEvent(reservationId, charge.getId()));
+        verify(connect, never()).refundFully(any(), any());
+    }
+
+    @Test
+    void settle_asksTheRoomAgainForTheLargerParty() {
+        // Nothing was held for the thirty minutes the diner took to decide, so the
+        // finding made when they asked is worth nothing now. It is made again, for the
+        // party they have just bought, over the slot they booked.
+        ReservationCharge charge = pendingTopUp(OffsetDateTime.now().plusMinutes(20));
+        reservationIs(reservation());
+        seatingIs(aTable());
+
+        topUps.settle(charge, "pi_123");
+
+        verify(availability).firstSeating(restaurantId, 5, STARTS_AT, ENDS_AT, reservationId);
+    }
+
+    @Test
+    void settle_whenNoTableIsLeft_handsTheMoneyBackAndLeavesTheBookingAlone() {
+        // The price of holding nothing. The diner paid for guests the room cannot take,
+        // so the whole of it goes back and the table they already had is untouched.
+        ReservationCharge charge = pendingTopUp(OffsetDateTime.now().plusMinutes(20));
+        Reservation reservation = reservation();
+        reservationIs(reservation);
+        seatingIs(null);
+
+        topUps.settle(charge, "pi_123");
+
+        verify(connect).refundFully("pi_123", "top-up-" + charge.getId());
+        assertThat(charge.getStatus()).isEqualTo(ChargeStatus.REFUNDED);
+        assertThat(charge.getRefundedAmountCents()).isEqualTo(3000);
+        // Refunded money never leaves for the restaurateur's bank.
+        assertThat(charge.getPayoutEligibleAt()).isNull();
+        assertThat(reservation.getPartySize()).isEqualTo(2);
+        assertThat(reservation.getTableId()).isEqualTo(ownTableId);
+        verify(events).publishEvent(
+                new ReservationTopUpRefundedEvent(reservationId, charge.getId()));
+    }
+
+    @Test
+    void settle_whenTheReservationWasCancelledMeanwhile_handsTheMoneyBack() {
+        // There is no table to check for a booking nobody will honour, and the money
+        // cannot stay: it bought guests at a service that is not happening.
+        ReservationCharge charge = pendingTopUp(OffsetDateTime.now().plusMinutes(20));
+        Reservation reservation = reservation();
+        reservation.setStatus(ReservationStatus.CANCELLED);
+        reservationIs(reservation);
+
+        topUps.settle(charge, "pi_123");
+
+        verify(connect).refundFully("pi_123", "top-up-" + charge.getId());
+        assertThat(charge.getStatus()).isEqualTo(ChargeStatus.REFUNDED);
+        verify(availability, never()).firstSeating(any(), anyInt(), any(), any(), any());
+    }
+
+    @Test
+    void settle_whenTheRequestHadAlreadyLapsed_handsTheMoneyBackWithoutLookingAtTheRoom() {
+        // A link that was closed and got paid anyway. The request it stood for is gone —
+        // its party may since have been revised down — so a free table proves nothing.
+        ReservationCharge charge = pendingTopUp(OffsetDateTime.now().minusMinutes(1));
+        charge.setStatus(ChargeStatus.LAPSED);
+        reservationIs(reservation());
+
+        topUps.settle(charge, "pi_123");
+
+        verify(connect).refundFully("pi_123", "top-up-" + charge.getId());
+        assertThat(charge.getStatus()).isEqualTo(ChargeStatus.REFUNDED);
+        verify(availability, never()).firstSeating(any(), anyInt(), any(), any(), any());
+    }
+
+    @Test
+    void settle_whenStripeRedeliversTheSameEvent_changesNothing() {
         ReservationCharge charge = pendingTopUp(OffsetDateTime.now().plusMinutes(20));
         charge.setStatus(ChargeStatus.PAID);
         charge.setStripePaymentIntentId("pi_first");
 
-        topUps.markPaid(charge, "pi_second");
+        topUps.settle(charge, "pi_second");
 
         assertThat(charge.getStripePaymentIntentId()).isEqualTo("pi_first");
         verify(charges, never()).save(any());
+    }
+
+    @Test
+    void settle_whenTheMoneyWasAlreadyHandedBack_doesNotRefundTwice() {
+        ReservationCharge charge = pendingTopUp(OffsetDateTime.now().plusMinutes(20));
+        charge.setStatus(ChargeStatus.REFUNDED);
+
+        topUps.settle(charge, "pi_123");
+
+        verify(connect, never()).refundFully(any(), any());
+        verify(charges, never()).save(any());
+    }
+
+    @Test
+    void lapsePendingFor_endsTheRequestAndClosesItsCheckout() {
+        // The window is not the only thing that can end a request: cancelling the
+        // reservation, or shrinking the party, leaves it standing for nothing.
+        ReservationCharge charge = pendingTopUp(OffsetDateTime.now().plusMinutes(20));
+        charge.setStripeSessionId("cs_live");
+        when(charges.findByReservationIdAndKindAndStatus(
+                reservationId, ChargeKind.PARTY_SIZE_TOP_UP, ChargeStatus.PENDING))
+                .thenReturn(Optional.of(charge));
+
+        assertThat(topUps.lapsePendingFor(reservationId, "the reservation was cancelled")).isTrue();
+
+        assertThat(charge.getStatus()).isEqualTo(ChargeStatus.LAPSED);
+        // Closed at Stripe too, or the dead link would still be payable there.
+        verify(connect).expireCheckout("cs_live");
+        verify(charges).save(charge);
+    }
+
+    @Test
+    void lapsePendingFor_whenNoRequestIsRunning_doesNothing() {
+        when(charges.findByReservationIdAndKindAndStatus(
+                reservationId, ChargeKind.PARTY_SIZE_TOP_UP, ChargeStatus.PENDING))
+                .thenReturn(Optional.empty());
+
+        assertThat(topUps.lapsePendingFor(reservationId, "the reservation was cancelled")).isFalse();
+
+        verify(charges, never()).save(any());
+    }
+
+    @Test
+    void lapsePendingFor_leavesTheDeadLinkResolvable() {
+        // Kept on purpose: a diner following it lands on a page that says the request is
+        // closed, rather than on a page that says the link never existed.
+        ReservationCharge charge = pendingTopUp(OffsetDateTime.now().plusMinutes(20));
+        when(charges.findByReservationIdAndKindAndStatus(
+                reservationId, ChargeKind.PARTY_SIZE_TOP_UP, ChargeStatus.PENDING))
+                .thenReturn(Optional.of(charge));
+
+        topUps.lapsePendingFor(reservationId, "the party was revised down");
+
+        assertThat(charge.getPaymentToken()).isEqualTo("tok");
+        assertThat(charge.isOpenFor(OffsetDateTime.now())).isFalse();
+    }
+
+    private void reservationIs(Reservation reservation) {
+        when(reservationRepository.findById(reservationId)).thenReturn(Optional.of(reservation));
+    }
+
+    private void seatingIs(RestaurantTable table) {
+        when(availability.firstSeating(restaurantId, 5, STARTS_AT, ENDS_AT, reservationId))
+                .thenReturn(table);
+    }
+
+    private RestaurantTable aTable() {
+        return RestaurantTable.builder()
+                .id(UUID.randomUUID())
+                .restaurantId(restaurantId)
+                .capacity(6)
+                .isActive(true)
+                .build();
     }
 
     private ReservationCharge pendingTopUp(OffsetDateTime expiresAt) {

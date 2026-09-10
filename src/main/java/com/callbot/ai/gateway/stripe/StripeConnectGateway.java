@@ -156,16 +156,34 @@ public class StripeConnectGateway {
                 charge.customerEmail(),
                 "Complément de couverts — " + charge.restaurantName(),
                 charge.extraGuests() + " couvert(s) supplémentaire(s), sous réserve d'une table "
-                        + "disponible au moment du règlement.");
+                        + "disponible au moment du règlement.",
+                // Its own landing page: the ordinary one promises a confirmation, and
+                // this payment may yet come back instead.
+                topUpSuccessUrl());
     }
 
     private CheckoutSession createConnectedCheckout(UUID reservationId, int amountCents,
             String currency, int applicationFeeCents, String connectedAccountId,
             String customerEmail, String productName, String productDescription) {
+        return createConnectedCheckout(reservationId, amountCents, currency, applicationFeeCents,
+                connectedAccountId, customerEmail, productName, productDescription,
+                connect.successUrl());
+    }
+
+    /** Falls back to the ordinary page rather than handing Stripe a null return URL. */
+    private String topUpSuccessUrl() {
+        String configured = connect.topUpSuccessUrl();
+        return (configured == null || configured.isBlank()) ? connect.successUrl() : configured;
+    }
+
+    private CheckoutSession createConnectedCheckout(UUID reservationId, int amountCents,
+            String currency, int applicationFeeCents, String connectedAccountId,
+            String customerEmail, String productName, String productDescription,
+            String successUrl) {
         requireKey();
         SessionCreateParams.Builder params = SessionCreateParams.builder()
                 .setMode(SessionCreateParams.Mode.PAYMENT)
-                .setSuccessUrl(connect.successUrl())
+                .setSuccessUrl(successUrl)
                 .setCancelUrl(connect.cancelUrl())
                 .putMetadata(RESERVATION_METADATA_KEY, reservationId.toString())
                 .addLineItem(SessionCreateParams.LineItem.builder()

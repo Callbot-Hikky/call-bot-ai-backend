@@ -58,6 +58,8 @@ class ReservationPaymentServiceTest {
     @Mock
     private ConnectAccountService connectAccount;
     @Mock
+    private PartySizeTopUpService topUps;
+    @Mock
     private ApplicationEventPublisher events;
     @InjectMocks
     private ReservationPaymentService service;
@@ -94,6 +96,22 @@ class ReservationPaymentServiceTest {
         ArgumentCaptor<ReservationCharge> captor = ArgumentCaptor.forClass(ReservationCharge.class);
         verify(charges).save(captor.capture());
         return captor.getValue();
+    }
+
+    /** A party that grew and was paid for: a second settled charge on the same booking. */
+    private ReservationCharge settledTopUp(String paymentIntentId) {
+        return ReservationCharge.builder()
+                .id(UUID.randomUUID())
+                .reservationId(reservationId)
+                .kind(ChargeKind.PARTY_SIZE_TOP_UP)
+                .status(ChargeStatus.PAID)
+                .amountCents(3000)
+                .applicationFeeCents(200)
+                .currency("eur")
+                .stripePaymentIntentId(paymentIntentId)
+                .paidAt(OffsetDateTime.now())
+                .targetPartySize(5)
+                .build();
     }
 
     private ReservationCharge settledBookingFee(String paymentIntentId) {
@@ -242,6 +260,41 @@ class ReservationPaymentServiceTest {
         verify(connect).refundFully("pi_1", "refund-" + refundedCharge.getId());
         verify(events).publishEvent(
                 new ReservationCancelledByGuestEvent(reservationId, true, 9000));
+    }
+
+    @Test
+    void cancellingEndsAnyRequestForALargerPartyAlongWithIt() {
+        // A request outstanding collected nothing, so there is nothing to give back —
+        // only a live link to close before it buys guests at a service that is off.
+        Reservation reservation = paidReservationStartingIn(72);
+        when(reservationRepository.findByCancellationToken(CANCELLATION_TOKEN))
+                .thenReturn(Optional.of(reservation));
+        when(charges.findByReservationIdAndStatus(reservationId, ChargeStatus.PAID))
+                .thenReturn(List.of());
+
+        service.cancelByToken(CANCELLATION_TOKEN);
+
+        verify(topUps).lapsePendingFor(reservationId, "the diner cancelled the reservation");
+    }
+
+    @Test
+    void cancellingRefundsASettledTopUpWithTheRestAndNothingSpecial() {
+        // A top-up already paid is money in the register like any other. The refund path
+        // gives back every settled charge, so it needs no handling of its own.
+        Reservation reservation = paidReservationStartingIn(72);
+        ReservationCharge fee = settledBookingFee("pi_fee");
+        ReservationCharge topUp = settledTopUp("pi_top_up");
+        when(reservationRepository.findByCancellationToken(CANCELLATION_TOKEN))
+                .thenReturn(Optional.of(reservation));
+        when(charges.findByReservationIdAndStatus(reservationId, ChargeStatus.PAID))
+                .thenReturn(List.of(fee, topUp));
+
+        CancellationResponse response = service.cancelByToken(CANCELLATION_TOKEN);
+
+        verify(connect).refundFully("pi_fee", "refund-" + fee.getId());
+        verify(connect).refundFully("pi_top_up", "refund-" + topUp.getId());
+        assertThat(topUp.getStatus()).isEqualTo(ChargeStatus.REFUNDED);
+        assertThat(response.refundedAmountCents()).isEqualTo(9000 + 3000);
     }
 
     @Test

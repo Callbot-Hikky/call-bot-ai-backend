@@ -41,6 +41,21 @@ moment de la demande sera **revérifiée au règlement**, et le client en est av
 Une seule demande à la fois par réservation : deux liens vivants seraient chacun payables
 pour une même table.
 
+Une demande se termine de trois façons :
+
+- **réglée, une table est libre** — la disponibilité est reconstatée au moment du
+  règlement, les couverts passent à M et la réservation bascule sur cette table ;
+- **réglée, plus aucune table** — c'est le prix de ne rien tenir pendant que le client
+  décide. Le complément est **remboursé intégralement**, la réservation reste telle
+  qu'elle était vendue, et le client comme le restaurateur en sont avertis ;
+- **caduque** — la demande a perdu son objet sans qu'un centime soit entré : le délai
+  s'est écoulé, la réservation a été annulée dessous, ou la tablée a été revue à la
+  baisse et le montant demandé ne correspondait plus à rien. La réservation est
+  inchangée, et **une nouvelle demande redevient possible**.
+
+Un complément **déjà réglé** est de l'argent comme un autre : il suit les règles de
+remboursement de la réservation à l'annulation, sans traitement particulier.
+
 ## Garantie no-show
 
 Engagement de payer une pénalité en cas d'absence non annulée. Aucune somme n'est
@@ -113,7 +128,11 @@ d'une table perdue, et en prélever une part serait facturer le malheur d'autrui
 
 Un mouvement d'argent sur une réservation : ce qui a été demandé, ce qui est entré, ce
 qui est ressorti, et le reversement qui l'a emporté. Il porte son montant, sa commission,
-son identifiant Stripe et son statut — *en attente*, *réglé*, *remboursé*.
+son identifiant Stripe et son statut — *en attente*, *réglé*, *remboursé*, *caduc*.
+
+*Caduc* n'appartient qu'au **complément de couverts** : la demande s'est éteinte sans
+qu'aucun argent n'entre. À distinguer de *remboursé*, qui suppose un mouvement dans les
+deux sens ; les confondre ferait apparaître des remboursements qui n'ont jamais eu lieu.
 
 Une réservation en porte **zéro, un ou plusieurs**. Zéro quand elle ne doit rien ; un
 pour des frais de réservation ou une pénalité no-show ; plusieurs dès qu'une tablée
