@@ -133,6 +133,21 @@ public class ReservationCharge {
         return ChargeStatus.PAID.equals(status);
     }
 
+    /**
+     * Records that the whole of this charge went back to the diner.
+     *
+     * <p>Four fields that must move together, and the reason this is one call rather
+     * than four at each site: leaving {@code payoutEligibleAt} set would let the sweep
+     * pay a restaurateur money that has already been handed back. The Stripe refund
+     * itself stays with the caller — only it knows the key to make its retry safe.
+     */
+    public void markRefundedInFull(OffsetDateTime now) {
+        this.status = ChargeStatus.REFUNDED;
+        this.refundedAt = now;
+        this.refundedAmountCents = this.amountCents;
+        this.payoutEligibleAt = null;
+    }
+
     public boolean isPending() {
         return ChargeStatus.PENDING.equals(status);
     }

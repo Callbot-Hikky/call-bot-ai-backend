@@ -316,7 +316,23 @@ class PartySizeTopUpServiceTest {
 
         topUps.settle(charge, "pi_123");
 
-        verify(availability).firstSeating(restaurantId, 5, STARTS_AT, ENDS_AT, reservationId);
+        verify(availability).firstSeating(
+                restaurantId, 5, STARTS_AT, ENDS_AT, reservationId, ownTableId);
+    }
+
+    @Test
+    void settle_asksToKeepTheTableThePartyIsAlreadySittingAt() {
+        // Growing a party is no reason to walk it across the room.
+        ReservationCharge charge = pendingTopUp(OffsetDateTime.now().plusMinutes(20));
+        reservationIs(reservation());
+        seatingIs(aTable());
+
+        topUps.settle(charge, "pi_123");
+
+        ArgumentCaptor<UUID> preferred = ArgumentCaptor.forClass(UUID.class);
+        verify(availability).firstSeating(
+                any(), anyInt(), any(), any(), any(), preferred.capture());
+        assertThat(preferred.getValue()).isEqualTo(ownTableId);
     }
 
     @Test
@@ -354,7 +370,7 @@ class PartySizeTopUpServiceTest {
 
         verify(connect).refundFully("pi_123", "top-up-" + charge.getId());
         assertThat(charge.getStatus()).isEqualTo(ChargeStatus.REFUNDED);
-        verify(availability, never()).firstSeating(any(), anyInt(), any(), any(), any());
+        verify(availability, never()).firstSeating(any(), anyInt(), any(), any(), any(), any());
     }
 
     @Test
@@ -369,7 +385,7 @@ class PartySizeTopUpServiceTest {
 
         verify(connect).refundFully("pi_123", "top-up-" + charge.getId());
         assertThat(charge.getStatus()).isEqualTo(ChargeStatus.REFUNDED);
-        verify(availability, never()).firstSeating(any(), anyInt(), any(), any(), any());
+        verify(availability, never()).firstSeating(any(), anyInt(), any(), any(), any(), any());
     }
 
     @Test
@@ -444,7 +460,7 @@ class PartySizeTopUpServiceTest {
     }
 
     private void seatingIs(RestaurantTable table) {
-        when(availability.firstSeating(restaurantId, 5, STARTS_AT, ENDS_AT, reservationId))
+        when(availability.firstSeating(restaurantId, 5, STARTS_AT, ENDS_AT, reservationId, ownTableId))
                 .thenReturn(table);
     }
 

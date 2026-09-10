@@ -218,7 +218,10 @@ public class PartySizeTopUpService {
         }
         return availability.firstSeating(reservation.getRestaurantId(),
                 charge.getTargetPartySize(), reservation.getStartsAt(), reservation.getEndsAt(),
-                reservation.getId());
+                reservation.getId(),
+                // Where they are already sitting, if it will hold them: growing a party
+                // is no reason to walk it across the room.
+                reservation.getTableId());
     }
 
     /**
@@ -229,15 +232,17 @@ public class PartySizeTopUpService {
      * refund — there is no service to have earned it on.
      */
     private void handBack(ReservationCharge charge, Reservation reservation, boolean stillStood) {
+        // Written before Stripe is called, not after. Both happen in one transaction, so
+        // either order rolls the register back on failure — but this order makes the
+        // failure that rolls back the one where no money moved. Refund first, and a
+        // transaction that dies afterwards leaves a request still marked pending with the
+        // money already gone: the redelivered event would then find a table freed in the
+        // meantime and seat the party on a payment that no longer exists.
+        charge.markRefundedInFull(OffsetDateTime.now());
+        charges.save(charge);
+
         // Keyed on the charge, so a redelivered event cannot give the same money back twice.
         connect.refundFully(charge.getStripePaymentIntentId(), "top-up-" + charge.getId());
-
-        charge.setStatus(ChargeStatus.REFUNDED);
-        charge.setRefundedAt(OffsetDateTime.now());
-        charge.setRefundedAmountCents(charge.getAmountCents());
-        // Refunded money never leaves for the restaurateur's bank.
-        charge.setPayoutEligibleAt(null);
-        charges.save(charge);
 
         log.warn("Top-up {} on reservation {} was paid but {}; {} cents refunded",
                 charge.getId(), reservation.getId(),

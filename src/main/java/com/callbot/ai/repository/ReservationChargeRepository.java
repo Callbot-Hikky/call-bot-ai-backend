@@ -45,7 +45,13 @@ public interface ReservationChargeRepository extends JpaRepository<ReservationCh
      *
      * <p>How a payment is told apart from another on the same reservation: Stripe's
      * metadata only carries the reservation, which no longer identifies one movement.
+     *
+     * <p>Locked, because Stripe retries until it gets a 2xx and two deliveries of the
+     * same event can land at once. Reading the row unlocked, both would find it awaiting
+     * settlement and both would go through with it — one refund (the idempotency key
+     * sees to that), but two messages telling the diner what became of their money.
      */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<ReservationCharge> findByStripeSessionId(String stripeSessionId);
 
     /** The charge a bank dispute refers to; a dispute carries no metadata of ours. */
