@@ -11,6 +11,10 @@ import com.callbot.ai.model.RestaurantMenuFile;
  * l'upload, jamais celui annonce par le client ; nosniff empeche un navigateur
  * de le reinterpreter ; l'ETag (l'id, le contenu d'un fichier ne change jamais)
  * permet la revalidation sans retelechargement.
+ *
+ * <p>Ces fichiers sont faits pour etre incorpores par NOS pages (apercu du
+ * restaurateur, carte publique) : SecurityConfig assouplit X-Frame-Options en
+ * « meme origine » sur ces seules URL, le reste de l'API garde DENY.
  */
 final class MenuFileHttp {
 

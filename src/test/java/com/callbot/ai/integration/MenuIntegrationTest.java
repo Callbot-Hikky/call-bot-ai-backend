@@ -129,6 +129,8 @@ class MenuIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(header().string("Content-Type", "image/png"))
                 .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                // Un fichier de menu peut etre incorpore par nos pages, et seulement par elles.
+                .andExpect(header().string("X-Frame-Options", "SAMEORIGIN"))
                 .andExpect(header().exists("ETag"))
                 .andExpect(content().bytes(pngBytes()));
 
@@ -242,6 +244,16 @@ class MenuIntegrationTest extends AbstractIntegrationTest {
 
         mockMvc.perform(get("/api/restaurants/" + restaurantId + "/menu"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void jsonResponsesKeepTheGlobalFrameDeny() throws Exception {
+        String token = registerAndGetToken("menu-frame@example.com");
+        String restaurantId = createOwnedRestaurant(token, "Chez Frame", "+33100000110");
+
+        mockMvc.perform(get("/api/public/restaurants/" + restaurantId + "/menu"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Frame-Options", "DENY"));
     }
 
     @Test
