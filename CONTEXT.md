@@ -26,6 +26,10 @@ le client à se dédire en abandonnant la somme, et obligeraient le restaurateur
 Remboursé intégralement si le client se désiste au-delà d'un délai fixé avant le service.
 En deçà de ce délai, la somme reste acquise au restaurateur.
 
+Une **baisse du nombre de couverts** rend en revanche les couverts abandonnés, quel que
+soit le délai : ce n'est pas un désistement, c'est une table plus petite. Voir
+« Remboursement des couverts abandonnés ».
+
 ## Complément de couverts
 
 Somme due quand une tablée grandit sur une réservation dont les frais de réservation
@@ -69,7 +73,45 @@ présence.
 
 Délai, fixé par le restaurateur, précédant l'heure du service. Un client qui se désiste
 **avant** ce délai récupère l'intégralité de ses frais de réservation ; passé ce délai,
-la somme reste acquise au restaurateur. Il n'existe pas de remboursement partiel.
+la somme reste acquise au restaurateur.
+
+Une annulation est **tout ou rien** : jamais une fraction. Annuler tard est exactement
+ce que les frais découragent, et rendre une part émousserait cela tout en invitant à
+discuter la fraction.
+
+## Fenêtre de modification
+
+Délai, fixé par le restaurateur, précédant l'heure du service, au-delà duquel le client
+ne peut plus modifier lui-même sa réservation. Zéro signifie « jusqu'au service », jamais
+« jamais ».
+
+**Indépendante de la fenêtre de remboursement** : rendre de l'argent et changer une tablée
+n'engagent pas la salle de la même façon.
+
+Elle vaut aussi pour le créneau **visé** : un client ne peut pas contourner un délai de
+trois heures en tirant son service à l'intérieur de celui-ci.
+
+## Remboursement des couverts abandonnés
+
+Somme rendue au client quand sa tablée diminue sur une réservation dont les frais ont été
+tarifés par couvert : (N − M) couverts × le montant figé à la création — le symétrique
+exact du complément de couverts.
+
+Rien à voir avec une annulation : le client vient toujours, avec moins de monde. La
+fenêtre de remboursement ne s'y applique donc pas.
+
+Prélevé sur l'encaissement le plus récent d'abord : les couverts retirés sont ceux qui ont
+été ajoutés en dernier, et c'est donc le complément qui les avait achetés qui cède avant
+les frais d'origine. Une **pénalité no-show** n'est jamais entamée — elle répond à une
+absence, pas à un couvert.
+
+La **commission Alloquence** est rendue au prorata : personne ne conserve de commission sur
+des couverts qui ne seront pas servis. Les **frais du prestataire de paiement** sur la part
+rendue, eux, ne reviennent jamais : ils sont à la charge d'Alloquence. Le client est
+remboursé en entier, et le restaurateur ne perd que les couverts qu'il ne servira pas.
+
+Si les frais n'ont **pas encore été réglés**, rien n'est rendu : le montant attendu est
+simplement retarifé sur la nouvelle tablée.
 
 ## Exemption de garantie
 
@@ -142,6 +184,11 @@ n'appartient pas à la réservation, il y est rattaché.
 Un remboursement rend **chaque** encaissement réglé, jamais seulement le premier. Un
 litige bancaire retrouve la réservation par l'encaissement, jamais l'inverse.
 
+Un encaissement peut être rendu **en partie** : c'est le cas d'une tablée qui diminue. Il
+reste alors *réglé* — le reste appartient toujours au restaurateur et lui sera reversé —
+et seule la somme rendue le distingue. *Remboursé* ne désigne qu'un encaissement rendu
+en entier, dont plus rien n'est reversable.
+
 ## Reversement
 
 Envoi vers la banque du restaurateur des **encaissements** réglés, net de la commission.
@@ -165,7 +212,14 @@ Il en existe deux, distincts :
   à usage unique, valable 30 minutes. Le lien de paiement initial ne règle jamais un
   complément, et réciproquement ;
 - le **lien d'annulation**, qui survit au règlement — c'est justement après avoir payé
-  qu'on peut avoir besoin d'annuler.
+  qu'on peut avoir besoin d'annuler ;
+- le **lien de modification**, par lequel le client change lui-même sa tablée et son
+  horaire. Seul lien **réutilisable** : une tablée peut être revue plusieurs fois, et le
+  consommer au premier passage obligerait à en renvoyer un à chaque modification.
+
+Chaque modification passée par le client est **annoncée au restaurant**, dans les deux
+sens : une table qui rétrécit est une table qu'on peut revendre, et personne n'était au
+téléphone pour l'apprendre.
 
 ## Constat d'absence
 

@@ -6,13 +6,15 @@ public record GuaranteeSettingsResponse(
         String mode,
         Integer bookingFeeCentsPerGuest,
         Integer noShowPenaltyCentsPerGuest,
-        Integer refundWindowHours) {
+        Integer refundWindowHours,
+        Integer modificationWindowHours) {
 
     public static GuaranteeSettingsResponse from(Restaurant restaurant) {
         return new GuaranteeSettingsResponse(
                 restaurant.getGuaranteeMode(),
                 restaurant.getBookingFeeCentsPerGuest(),
                 restaurant.getNoShowPenaltyCentsPerGuest(),
-                restaurant.getRefundWindowHours());
+                restaurant.getRefundWindowHours(),
+                restaurant.getModificationWindowHours());
     }
 }

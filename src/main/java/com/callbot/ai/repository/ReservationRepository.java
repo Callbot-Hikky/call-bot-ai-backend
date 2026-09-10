@@ -85,6 +85,8 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
 
     Optional<Reservation> findByCancellationToken(String cancellationToken);
 
+    Optional<Reservation> findByModificationToken(String modificationToken);
+
     /** Reservations across a set of restaurants — used to scope listings to one organization. */
     List<Reservation> findByRestaurantIdIn(Collection<UUID> restaurantIds);
 

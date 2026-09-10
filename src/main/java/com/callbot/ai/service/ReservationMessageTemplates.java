@@ -35,7 +35,7 @@ public class ReservationMessageTemplates {
         String when = formatDateTime(reservation.getStartsAt(), restaurant.getTimezone());
         String address = formatAddress(restaurant);
         String phone = formatPhoneLink(restaurant.getPhoneNumber());
-        String rescheduleLink = buildRescheduleLink(reservation);
+        String modificationLink = buildModificationLink(reservation);
 
         return """
                 %s,
@@ -46,10 +46,10 @@ public class ReservationMessageTemplates {
                 **Adresse** : %s
                 **Téléphone** : %s
 
-                -# Notre assistant s'est peut-être trompé de créneau ? [Choisissez un autre horaire](%s)
+                -# Un imprévu, ou notre assistant s'est trompé ? [Modifier ma réservation](%s)
 
                 À très vite !"""
-                .formatted(greeting, restaurant.getName(), when, reservation.getPartySize(), address, phone, rescheduleLink);
+                .formatted(greeting, restaurant.getName(), when, reservation.getPartySize(), address, phone, modificationLink);
     }
 
     /**
@@ -144,7 +144,8 @@ public class ReservationMessageTemplates {
 
     /**
      * Message 4: the fee is in and the table is theirs. It repeats the refund rule and
-     * carries the cancellation link, so the diner never has to phone to give a table back.
+     * carries both of the diner's remaining links, so they never have to phone to give a
+     * table back — or to change how many of them are coming.
      */
     public String forClientConfirmedAfterPayment(Reservation reservation, Customer customer,
             Restaurant restaurant) {
@@ -160,7 +161,7 @@ public class ReservationMessageTemplates {
                 Ces frais ne sont pas déduits de l'addition. Ils vous seront intégralement
                 remboursés si vous annulez plus de %d h avant le service.
 
-                -# Un empêchement ? [Annuler ma réservation](%s)
+                -# Un changement ? [Modifier ma réservation](%s) — un empêchement ? [Annuler ma réservation](%s)
 
                 À très vite !"""
                 .formatted(greeting(customer), restaurant.getName(),
@@ -169,6 +170,7 @@ public class ReservationMessageTemplates {
                         formatAddress(restaurant),
                         formatAmount(reservation.getGuaranteeAmountCents(), reservation.getCurrency()),
                         refundWindowOf(reservation),
+                        buildModificationLink(reservation),
                         buildCancellationLink(reservation));
     }
 
@@ -558,7 +560,7 @@ public class ReservationMessageTemplates {
         String when = formatDateTime(reservation.getStartsAt(), restaurant.getTimezone());
         String address = formatAddress(restaurant);
         String phone = formatPhoneLink(restaurant.getPhoneNumber());
-        String rescheduleLink = buildRescheduleLink(reservation);
+        String modificationLink = buildModificationLink(reservation);
 
         return """
                 %s,
@@ -569,10 +571,10 @@ public class ReservationMessageTemplates {
                 **Adresse** : %s
                 **Téléphone** : %s
 
-                -# Besoin de changer à nouveau ? [Choisissez un autre horaire](%s)
+                -# Besoin de changer à nouveau ? [Modifier ma réservation](%s)
 
                 À très vite !"""
-                .formatted(greeting, restaurant.getName(), when, reservation.getPartySize(), address, phone, rescheduleLink);
+                .formatted(greeting, restaurant.getName(), when, reservation.getPartySize(), address, phone, modificationLink);
     }
 
     public String forRestaurant(Reservation reservation, Customer customer, Restaurant restaurant) {
@@ -607,6 +609,43 @@ public class ReservationMessageTemplates {
                 **Nombre de personnes** : %d
                 **Notes** : %s"""
                 .formatted(who, when, reservation.getPartySize(), notes);
+    }
+
+    /**
+     * The dining room's copy when a diner changed their own booking.
+     *
+     * <p>Says what moved, not only where it landed. "Table of four at 21 h" tells a
+     * restaurant nothing it can act on; "six became four" frees a table in someone's head
+     * before they have finished reading. Only the lines that actually changed carry the
+     * before, so an hour that did not move does not look as though it might have.
+     *
+     * @param refundedAmountCents what went back to the diner, zero when nothing did. Named
+     *                            out loud because the restaurateur's own takings just fell
+     *                            and they should learn it here rather than from a statement.
+     */
+    public String forRestaurantModifiedByGuest(Reservation reservation, Customer customer,
+            Restaurant restaurant, Integer previousPartySize, OffsetDateTime previousStartsAt,
+            int refundedAmountCents) {
+        String when = formatDateTime(reservation.getStartsAt(), restaurant.getTimezone());
+        if (previousStartsAt != null && !previousStartsAt.isEqual(reservation.getStartsAt())) {
+            when = formatDateTime(previousStartsAt, restaurant.getTimezone()) + " → **" + when + "**";
+        }
+        String covers = String.valueOf(reservation.getPartySize());
+        if (previousPartySize != null && !previousPartySize.equals(reservation.getPartySize())) {
+            covers = previousPartySize + " → **" + reservation.getPartySize() + "**";
+        }
+        String money = refundedAmountCents > 0
+                ? "\n**Remboursé au client** : "
+                        + formatAmount(refundedAmountCents, reservation.getCurrency())
+                : "";
+
+        return """
+                **Réservation modifiée par le client**
+
+                **Client** : %s
+                **Date** : %s
+                **Nombre de personnes** : %s%s"""
+                .formatted(formatCustomerIdentity(customer), when, covers, money);
     }
 
     private String formatDateTime(OffsetDateTime dt, String timezone) {
@@ -650,8 +689,15 @@ public class ReservationMessageTemplates {
         return sb.toString();
     }
 
-    private String buildRescheduleLink(Reservation reservation) {
-        return baseUrl() + "/client/reservations/" + reservation.getId() + "/reschedule";
+    /**
+     * Where a diner changes their own covers and hour.
+     *
+     * <p>Keyed on the modification token, never the reservation's id: an id in a message
+     * is an address anyone holding one can walk to, and the rest of the diner's journey
+     * has always gone through a secret instead.
+     */
+    private String buildModificationLink(Reservation reservation) {
+        return baseUrl() + "/client/reservations/modifier/" + reservation.getModificationToken();
     }
 
     private String baseUrl() {

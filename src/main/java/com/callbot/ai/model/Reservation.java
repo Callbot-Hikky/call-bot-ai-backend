@@ -111,6 +111,23 @@ public class Reservation {
     @Column(name = "cancellation_token")
     private String cancellationToken;
 
+    /**
+     * Key letting an account-less diner change their own covers and time.
+     *
+     * <p>Unlike the payment token, it is <em>not</em> single-use: a party that goes from
+     * four to six and then to five walks the same link twice, and burning it on the first
+     * pass would mean sending a fresh one after every change.
+     */
+    @Column(name = "modification_token")
+    private String modificationToken;
+
+    /**
+     * Hours before the service beyond which the diner may no longer change anything,
+     * frozen like the mode and the amount. Zero means up to the service itself.
+     */
+    @Column(name = "modification_window_hours")
+    private Integer modificationWindowHours;
+
     @Column(name = "cancelled_at")
     private OffsetDateTime cancelledAt;
 
