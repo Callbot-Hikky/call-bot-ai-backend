@@ -378,11 +378,7 @@ public class ReservationPaymentService {
         int total = 0;
         for (ReservationCharge charge : paid) {
             connect.refundFully(charge.getStripePaymentIntentId(), "refund-" + charge.getId());
-            charge.setStatus(ChargeStatus.REFUNDED);
-            charge.setRefundedAt(now);
-            charge.setRefundedAmountCents(charge.getAmountCents());
-            // Refunded money never leaves for the restaurateur's bank.
-            charge.setPayoutEligibleAt(null);
+            charge.markRefundedInFull(now);
             total += charge.getAmountCents();
         }
         charges.saveAll(paid);

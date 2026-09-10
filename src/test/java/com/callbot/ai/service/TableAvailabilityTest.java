@@ -111,6 +111,45 @@ class TableAvailabilityTest {
     }
 
     @Test
+    void firstSeating_keepsThePreferredTableWhenItCanHoldTheParty() {
+        // The staff laid the room out around where people are sitting: a move nobody
+        // asked for is a move they have to notice and undo.
+        UUID ownTable = UUID.randomUUID();
+        RestaurantTable other = table(UUID.randomUUID(), 8, true);
+        // Listed first, so only the preference can put the party back on its own table.
+        tables(other, table(ownTable, 6, true));
+        busy();
+
+        assertThat(availability.firstSeating(restaurantId, 6, STARTS_AT, ENDS_AT, reservationId,
+                ownTable)).isNotNull()
+                .extracting(RestaurantTable::getId).isEqualTo(ownTable);
+    }
+
+    @Test
+    void firstSeating_movesThePartyWhenThePreferredTableIsTooSmall() {
+        UUID ownTable = UUID.randomUUID();
+        UUID bigger = UUID.randomUUID();
+        tables(table(ownTable, 2, true), table(bigger, 8, true));
+        busy();
+
+        assertThat(availability.firstSeating(restaurantId, 6, STARTS_AT, ENDS_AT, reservationId,
+                ownTable)).isNotNull()
+                .extracting(RestaurantTable::getId).isEqualTo(bigger);
+    }
+
+    @Test
+    void firstSeating_movesThePartyWhenThePreferredTableIsTaken() {
+        UUID ownTable = UUID.randomUUID();
+        UUID bigger = UUID.randomUUID();
+        tables(table(ownTable, 6, true), table(bigger, 8, true));
+        busy(ownTable);
+
+        assertThat(availability.firstSeating(restaurantId, 6, STARTS_AT, ENDS_AT, reservationId,
+                ownTable)).isNotNull()
+                .extracting(RestaurantTable::getId).isEqualTo(bigger);
+    }
+
+    @Test
     void canSeat_answersTheSameQuestionWithoutTheTable() {
         tables(table(UUID.randomUUID(), 6, true));
         busy();

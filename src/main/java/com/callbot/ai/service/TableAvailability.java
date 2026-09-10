@@ -42,6 +42,22 @@ public class TableAvailability {
      */
     public RestaurantTable firstSeating(UUID restaurantId, int partySize,
             OffsetDateTime startsAt, OffsetDateTime endsAt, UUID excludeReservationId) {
+        return firstSeating(restaurantId, partySize, startsAt, endsAt, excludeReservationId, null);
+    }
+
+    /**
+     * The same, with a table to keep if it will do.
+     *
+     * <p>A party that grows from two to five on a table for six should not be walked
+     * across the room for nothing. The staff laid the room out around where people are
+     * sitting, so a move nobody asked for is a move they have to notice and undo.
+     *
+     * @param preferredTableId the table the reservation already sits on, returned
+     *                         unchanged when it can seat the larger party
+     */
+    public RestaurantTable firstSeating(UUID restaurantId, int partySize,
+            OffsetDateTime startsAt, OffsetDateTime endsAt, UUID excludeReservationId,
+            UUID preferredTableId) {
         List<RestaurantTable> candidates = tableRepository.findByRestaurantId(restaurantId).stream()
                 .filter(t -> Boolean.TRUE.equals(t.getIsActive()))
                 .filter(t -> t.getCapacity() != null && t.getCapacity() >= partySize)
@@ -52,10 +68,14 @@ public class TableAvailability {
 
         Set<UUID> busy = new HashSet<>(reservationRepository.findBusyTableIdsExcluding(
                 restaurantId, startsAt, endsAt, excludeReservationId));
-        return candidates.stream()
+        List<RestaurantTable> free = candidates.stream()
                 .filter(t -> !busy.contains(t.getId()))
+                .toList();
+
+        return free.stream()
+                .filter(t -> t.getId().equals(preferredTableId))
                 .findFirst()
-                .orElse(null);
+                .orElseGet(() -> free.stream().findFirst().orElse(null));
     }
 
     /** Whether any table can seat the party over the slot. */

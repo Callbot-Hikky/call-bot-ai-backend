@@ -69,6 +69,8 @@ class PartySizeTopUpIntegrationTest extends AbstractIntegrationTest {
     private String stripeSuffix;
     /** The only table that can seat a party bigger than two. */
     private String bigTableId;
+    /** Whoever is holding it, when a test needs it held. */
+    private String occupierId;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -330,6 +332,29 @@ class PartySizeTopUpIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void aRiseIsPossibleAgainAfterAnImpasse() throws Exception {
+        // The other half of the same promise: a request that was paid and handed back
+        // must free the reservation exactly as an expired one does. The diner may well
+        // ask again — a table can come free between the impasse and the second attempt.
+        String reservationId = paidReservationFor(2);
+        mockMvc.perform(raiseTo(reservationId, 5)).andExpect(status().isOk());
+        occupyTheBigTable();
+        settleTheTopUp(reservationId);
+        assertThat(topUpOf(reservationId).getStatus()).isEqualTo(ChargeStatus.REFUNDED);
+
+        mockMvc.perform(raiseTo(reservationId, 5))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("no_table_available"));
+
+        freeTheBigTable();
+        mockMvc.perform(raiseTo(reservationId, 5))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pendingTopUp.targetPartySize").value(5));
+
+        assertThat(topUpsOf(reservationId)).hasSize(2);
+    }
+
+    @Test
     void cancellingTheReservationEndsTheRequestRidingOnIt() throws Exception {
         String reservationId = paidReservationFor(2);
         mockMvc.perform(raiseTo(reservationId, 5)).andExpect(status().isOk());
@@ -389,14 +414,22 @@ class PartySizeTopUpIntegrationTest extends AbstractIntegrationTest {
 
     /** Someone else takes the only table big enough, over the same slot. */
     private void occupyTheBigTable() throws Exception {
-        mockMvc.perform(post("/api/reservations")
+        occupierId = JsonPath.read(mockMvc.perform(post("/api/reservations")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"restaurantId":"%s","tableId":"%s","startsAt":"2030-07-01T19:00:00Z",\
                                 "endsAt":"2030-07-01T21:00:00Z","partySize":8}"""
                                 .formatted(restaurantId, bigTableId)))
-                .andExpect(status().isCreated());
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString(), "$.id");
+    }
+
+    /** Frees it again, so a second attempt at the same rise has somewhere to go. */
+    private void freeTheBigTable() throws Exception {
+        mockMvc.perform(delete("/api/reservations/" + occupierId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNoContent());
     }
 
     /** Winds the deadline back rather than waiting half an hour for it. */
