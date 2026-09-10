@@ -68,6 +68,7 @@ public class ReservationPaymentService {
     private final CustomerRepository customerRepository;
     private final StripeConnectGateway connect;
     private final ConnectAccountService connectAccount;
+    private final PartySizeTopUpService topUps;
     private final ApplicationEventPublisher events;
 
     @Transactional(readOnly = true)
@@ -201,6 +202,16 @@ public class ReservationPaymentService {
      * again would send the diner a second confirmation and restart the payout clock.
      */
     public void markPaid(ConnectWebhookEvent.ReservationPaid paid) {
+        // A reservation can now carry more than one payable checkout, and Stripe's
+        // metadata only names the reservation. The session says which movement this was.
+        ReservationCharge bySession = paid.sessionId() == null
+                ? null
+                : charges.findByStripeSessionId(paid.sessionId()).orElse(null);
+        if (bySession != null && bySession.isPartySizeTopUp()) {
+            topUps.markPaid(bySession, paid.paymentIntentId());
+            return;
+        }
+
         Reservation reservation = reservationRepository.findById(paid.reservationId()).orElse(null);
         if (reservation == null) {
             log.warn("Stripe reported a payment for unknown reservation {}", paid.reservationId());

@@ -34,6 +34,20 @@ public interface ReservationChargeRepository extends JpaRepository<ReservationCh
 
     boolean existsByReservationIdAndKindAndStatus(UUID reservationId, String kind, String status);
 
+    /**
+     * The top-up a diner reached through their link. The token is the whole of their
+     * authorisation, so nothing here is ever looked up by id on their behalf.
+     */
+    Optional<ReservationCharge> findByPaymentToken(String paymentToken);
+
+    /**
+     * The charge a hosted checkout belongs to.
+     *
+     * <p>How a payment is told apart from another on the same reservation: Stripe's
+     * metadata only carries the reservation, which no longer identifies one movement.
+     */
+    Optional<ReservationCharge> findByStripeSessionId(String stripeSessionId);
+
     /** The charge a bank dispute refers to; a dispute carries no metadata of ours. */
     Optional<ReservationCharge> findByStripePaymentIntentId(String stripePaymentIntentId);
 

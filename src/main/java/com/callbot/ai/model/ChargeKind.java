@@ -14,6 +14,16 @@ public final class ChargeKind {
      */
     public static final String NO_SHOW_PENALTY = "no_show_penalty";
 
+    /**
+     * The difference owed when a party grows on a reservation whose fee was already
+     * priced per guest.
+     *
+     * <p>A second, independent payment rather than a correction of the first: the
+     * booking fee was collected for the party as it stood, and this buys the guests
+     * added since. It carries a commission like the fee it extends.
+     */
+    public static final String PARTY_SIZE_TOP_UP = "party_size_top_up";
+
     private ChargeKind() {
     }
 }

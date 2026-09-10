@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.callbot.ai.dto.CustomerResponse;
+import com.callbot.ai.dto.PendingTopUpResponse;
 import com.callbot.ai.dto.RescheduleSlotsResponse;
 import com.callbot.ai.dto.ReservationRequest;
 import com.callbot.ai.dto.ReservationResponse;
@@ -26,6 +27,8 @@ import com.callbot.ai.dto.RestaurantSummaryResponse;
 import com.callbot.ai.dto.RestaurantTableResponse;
 import com.callbot.ai.exception.InvalidRequestException;
 import com.callbot.ai.exception.ResourceNotFoundException;
+import com.callbot.ai.model.ChargeKind;
+import com.callbot.ai.model.ChargeStatus;
 import com.callbot.ai.model.Reservation;
 import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.model.Restaurant;
@@ -34,6 +37,7 @@ import com.callbot.ai.model.RestaurantTable;
 import com.callbot.ai.notification.ReservationCreatedEvent;
 import com.callbot.ai.notification.ReservationUpdatedEvent;
 import com.callbot.ai.repository.CustomerRepository;
+import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantHoursRepository;
 import com.callbot.ai.repository.RestaurantRepository;
@@ -59,6 +63,8 @@ public class ReservationService {
     private final OrganizationScope scope;
     private final GuaranteePolicy guaranteePolicy;
     private final PartySizeChangePolicy partySizeChangePolicy;
+    private final PartySizeTopUpService topUps;
+    private final ReservationChargeRepository charges;
 
     public ReservationResponse create(ReservationRequest request, String callerEmail) {
         Restaurant restaurant = scope.ownedRestaurant(request.restaurantId(), callerEmail);
@@ -105,17 +111,29 @@ public class ReservationService {
         return toResponse(find(id, callerEmail), expand);
     }
 
+    /**
+     * Applies an edit from the dashboard.
+     *
+     * <p>A rise in covers on a paid reservation does not take effect here: the rule sends
+     * it off to be paid for, and the reservation keeps the party it was sold with until
+     * the money is in. Everything else in the request is still written — the staff member
+     * correcting a note alongside the covers should not lose the note.
+     */
     public ReservationResponse update(UUID id, ReservationRequest request, boolean notify, String callerEmail) {
         Reservation reservation = find(id, callerEmail);
-        // Before anything is written: a change in covers goes through the rule. The check
-        // uses the requested slot, since that is the slot the reservation will occupy.
-        partySizeChangePolicy.check(reservation, request.partySize(), request.startsAt(), request.endsAt());
+        // Before anything is written: a change in covers goes through the rule. It weighs
+        // the requested slot, since that is the slot the reservation will occupy.
+        PartySizeChange verdict = partySizeChangePolicy.decide(
+                reservation, request.partySize(), request.startsAt(), request.endsAt());
+        Integer requestedPartySize = request.partySize();
         reservation.setCustomerId(request.customerId());
         reservation.setTableId(request.tableId());
         reservation.setCallId(request.callId());
         reservation.setStartsAt(request.startsAt());
         reservation.setEndsAt(request.endsAt());
-        reservation.setPartySize(request.partySize());
+        if (verdict == PartySizeChange.APPLY) {
+            reservation.setPartySize(requestedPartySize);
+        }
         if (request.status() != null) {
             reservation.setStatus(request.status());
         }
@@ -124,10 +142,17 @@ public class ReservationService {
         }
         reservation.setNotes(request.notes());
         Reservation saved = reservationRepository.save(reservation);
+
+        if (verdict == PartySizeChange.COLLECT_TOP_UP) {
+            // The diner is told about the money owed; a second "your booking changed"
+            // message would announce a change that has not happened.
+            return ReservationResponse.from(saved,
+                    PendingTopUpResponse.of(topUps.open(saved, requestedPartySize)));
+        }
         if (notify) {
             events.publishEvent(new ReservationUpdatedEvent(saved.getId()));
         }
-        return ReservationResponse.from(saved);
+        return ReservationResponse.from(saved, pendingTopUpOf(saved));
     }
 
     /**
@@ -287,7 +312,16 @@ public class ReservationService {
                     .map(RestaurantSummaryResponse::from)
                     .orElse(null);
         }
-        return ReservationResponse.from(reservation, table, customer, restaurant);
+        return ReservationResponse.from(reservation, table, customer, restaurant,
+                pendingTopUpOf(reservation));
+    }
+
+    /** The top-up awaiting settlement on this reservation, when there is one. */
+    private PendingTopUpResponse pendingTopUpOf(Reservation reservation) {
+        return charges.findByReservationIdAndKindAndStatus(
+                        reservation.getId(), ChargeKind.PARTY_SIZE_TOP_UP, ChargeStatus.PENDING)
+                .map(PendingTopUpResponse::of)
+                .orElse(null);
     }
 
     /**

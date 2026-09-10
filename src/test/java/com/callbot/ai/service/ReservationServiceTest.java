@@ -27,13 +27,18 @@ import com.callbot.ai.dto.ReservationResponse;
 import com.callbot.ai.exception.InvalidRequestException;
 import com.callbot.ai.exception.PartySizeChangeRejectedException;
 import com.callbot.ai.exception.ResourceNotFoundException;
+import com.callbot.ai.model.ChargeKind;
+import com.callbot.ai.model.ChargeStatus;
 import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.ReservationCharge;
 import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.repository.CustomerRepository;
+import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 import com.callbot.ai.repository.RestaurantTableRepository;
+import com.callbot.ai.notification.ReservationUpdatedEvent;
 import com.callbot.ai.security.OrganizationScope;
 
 @ExtendWith(MockitoExtension.class)
@@ -55,6 +60,10 @@ class ReservationServiceTest {
     private GuaranteePolicy guaranteePolicy;
     @Mock
     private PartySizeChangePolicy partySizeChangePolicy;
+    @Mock
+    private PartySizeTopUpService topUps;
+    @Mock
+    private ReservationChargeRepository charges;
     @InjectMocks
     private ReservationService reservationService;
 
@@ -258,21 +267,25 @@ class ReservationServiceTest {
         verify(reservationRepository).findAll();
     }
 
+    private ReservationRequest raisedTo(int partySize) {
+        return new ReservationRequest(restaurantId, null, null, null,
+                OffsetDateTime.parse("2030-01-01T19:00:00Z"),
+                OffsetDateTime.parse("2030-01-01T21:00:00Z"),
+                partySize, null, null, null, null);
+    }
+
     @Test
-    void update_whenPartySizeChanges_checksTheRuleBeforeWriting() {
+    void update_whenPartySizeChanges_weighsTheRuleBeforeWriting() {
         UUID id = UUID.randomUUID();
         when(reservationRepository.findById(id)).thenReturn(Optional.of(reservation(id)));
         when(reservationRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(partySizeChangePolicy.decide(any(), any(), any(), any()))
+                .thenReturn(PartySizeChange.APPLY);
 
-        ReservationRequest raised = new ReservationRequest(restaurantId, null, null, null,
-                OffsetDateTime.parse("2030-01-01T19:00:00Z"),
-                OffsetDateTime.parse("2030-01-01T21:00:00Z"),
-                6, null, null, null, null);
-
-        ReservationResponse response = reservationService.update(id, raised, false, OWNER);
+        ReservationResponse response = reservationService.update(id, raisedTo(6), false, OWNER);
 
         assertThat(response.partySize()).isEqualTo(6);
-        verify(partySizeChangePolicy).check(any(), eq(6),
+        verify(partySizeChangePolicy).decide(any(), eq(6),
                 eq(OffsetDateTime.parse("2030-01-01T19:00:00Z")),
                 eq(OffsetDateTime.parse("2030-01-01T21:00:00Z")));
     }
@@ -282,12 +295,66 @@ class ReservationServiceTest {
         UUID id = UUID.randomUUID();
         when(reservationRepository.findById(id)).thenReturn(Optional.of(reservation(id)));
         doThrow(new PartySizeChangeRejectedException(
-                PartySizeChangeRejectedException.TOP_UP_REQUIRED, "top-up owed"))
-                .when(partySizeChangePolicy).check(any(), any(), any(), any());
+                PartySizeChangeRejectedException.TOP_UP_PENDING, "already running"))
+                .when(partySizeChangePolicy).decide(any(), any(), any(), any());
 
         assertThatThrownBy(() -> reservationService.update(id, request(), false, OWNER))
                 .isInstanceOf(PartySizeChangeRejectedException.class);
 
         verify(reservationRepository, never()).save(any());
+    }
+
+    @Test
+    void update_whenTheRiseHasToBePaidFor_keepsTheCoversAndOpensATopUp() {
+        UUID id = UUID.randomUUID();
+        Reservation stored = reservation(id);
+        when(reservationRepository.findById(id)).thenReturn(Optional.of(stored));
+        when(reservationRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(partySizeChangePolicy.decide(any(), any(), any(), any()))
+                .thenReturn(PartySizeChange.COLLECT_TOP_UP);
+        when(topUps.open(any(), eq(6))).thenReturn(ReservationCharge.builder()
+                .id(UUID.randomUUID())
+                .reservationId(id)
+                .kind(ChargeKind.PARTY_SIZE_TOP_UP)
+                .status(ChargeStatus.PENDING)
+                .amountCents(2000)
+                .currency("eur")
+                .targetPartySize(6)
+                .tokenExpiresAt(OffsetDateTime.parse("2030-01-01T18:30:00Z"))
+                .build());
+
+        ReservationResponse response = reservationService.update(id, raisedTo(6), false, OWNER);
+
+        // The table is not sold before it is paid for: the party stays where it was.
+        assertThat(response.partySize()).isEqualTo(2);
+        assertThat(response.pendingTopUp()).isNotNull();
+        assertThat(response.pendingTopUp().targetPartySize()).isEqualTo(6);
+        assertThat(response.pendingTopUp().amountCents()).isEqualTo(2000);
+        // The diner hears about the money owed, not about a change that has not happened.
+        verify(events, never()).publishEvent(any(ReservationUpdatedEvent.class));
+    }
+
+    @Test
+    void update_whenTheRiseHasToBePaidFor_stillWritesTheRestOfTheEdit() {
+        UUID id = UUID.randomUUID();
+        when(reservationRepository.findById(id)).thenReturn(Optional.of(reservation(id)));
+        when(reservationRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(partySizeChangePolicy.decide(any(), any(), any(), any()))
+                .thenReturn(PartySizeChange.COLLECT_TOP_UP);
+        when(topUps.open(any(), eq(6))).thenReturn(ReservationCharge.builder()
+                .id(UUID.randomUUID()).reservationId(id).kind(ChargeKind.PARTY_SIZE_TOP_UP)
+                .status(ChargeStatus.PENDING).amountCents(2000).currency("eur")
+                .targetPartySize(6).build());
+
+        ReservationRequest withNote = new ReservationRequest(restaurantId, null, null, null,
+                OffsetDateTime.parse("2030-01-01T19:00:00Z"),
+                OffsetDateTime.parse("2030-01-01T21:00:00Z"),
+                6, null, null, "Allergie arachide", null);
+
+        ReservationResponse response = reservationService.update(id, withNote, false, OWNER);
+
+        // A staff member correcting a note alongside the covers must not lose the note.
+        assertThat(response.notes()).isEqualTo("Allergie arachide");
+        assertThat(response.partySize()).isEqualTo(2);
     }
 }

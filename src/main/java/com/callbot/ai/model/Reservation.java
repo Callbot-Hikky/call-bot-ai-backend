@@ -81,6 +81,16 @@ public class Reservation {
     @Column(name = "guarantee_amount_cents")
     private Integer guaranteeAmountCents;
 
+    /**
+     * What one guest costs under this reservation's guarantee, frozen when it was taken.
+     *
+     * <p>{@link #guaranteeAmountCents} is this multiplied by the party as it then stood.
+     * Once a party can grow, the total is no longer the frozen thing — the unit price is,
+     * and a top-up is priced off it rather than off the restaurant's current setting.
+     */
+    @Column(name = "guarantee_cents_per_guest")
+    private Integer guaranteeCentsPerGuest;
+
     @Builder.Default
     @Column(name = "currency", nullable = false)
     private String currency = "eur";

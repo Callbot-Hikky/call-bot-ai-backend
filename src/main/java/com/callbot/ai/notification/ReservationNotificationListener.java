@@ -15,8 +15,10 @@ import com.callbot.ai.model.Customer;
 import com.callbot.ai.model.GuaranteeMode;
 import com.callbot.ai.model.GuaranteeStatus;
 import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.ReservationCharge;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.repository.CustomerRepository;
+import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 import com.callbot.ai.service.DiscordNotificationService;
@@ -28,17 +30,20 @@ public class ReservationNotificationListener {
     private static final Logger log = LoggerFactory.getLogger(ReservationNotificationListener.class);
 
     private final ReservationRepository reservationRepository;
+    private final ReservationChargeRepository charges;
     private final CustomerRepository customerRepository;
     private final RestaurantRepository restaurantRepository;
     private final ReservationMessageTemplates templates;
     private final DiscordNotificationService discord;
 
     public ReservationNotificationListener(ReservationRepository reservationRepository,
+                                           ReservationChargeRepository charges,
                                            CustomerRepository customerRepository,
                                            RestaurantRepository restaurantRepository,
                                            ReservationMessageTemplates templates,
                                            DiscordNotificationService discord) {
         this.reservationRepository = reservationRepository;
+        this.charges = charges;
         this.customerRepository = customerRepository;
         this.restaurantRepository = restaurantRepository;
         this.templates = templates;
@@ -141,6 +146,29 @@ public class ReservationNotificationListener {
                     context.reservation(), context.customer(), context.restaurant()));
             discord.sendReservationMessage(templates.forRestaurantUpdated(
                     context.reservation(), context.customer(), context.restaurant()));
+        });
+    }
+
+    /**
+     * A party grew and the difference is owed.
+     *
+     * <p>The charge is loaded by the id the event carried, not by "the pending top-up":
+     * by the time this runs another could have taken its place, and the diner would get
+     * a link to a debt they were never told about.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
+    public void onTopUpRequested(ReservationTopUpRequestedEvent event) {
+        ReservationCharge topUp = charges.findById(event.chargeId()).orElse(null);
+        if (topUp == null) {
+            log.warn("Top-up {} not found when handling its request event", event.chargeId());
+            return;
+        }
+        contextFor(event.reservationId(), "top-up requested").ifPresent(context -> {
+            discord.sendClientSmsMessage(templates.forClientPartySizeTopUp(
+                    context.reservation(), topUp, context.customer(), context.restaurant()));
+            discord.sendReservationMessage(templates.forRestaurantPartySizeTopUp(
+                    context.reservation(), topUp, context.customer(), context.restaurant()));
         });
     }
 

@@ -9,10 +9,13 @@ import java.util.UUID;
 import org.springframework.stereotype.Component;
 
 import com.callbot.ai.exception.PartySizeChangeRejectedException;
+import com.callbot.ai.model.ChargeKind;
+import com.callbot.ai.model.ChargeStatus;
 import com.callbot.ai.model.GuaranteeMode;
 import com.callbot.ai.model.GuaranteeStatus;
 import com.callbot.ai.model.Reservation;
 import com.callbot.ai.model.RestaurantTable;
+import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantTableRepository;
 
@@ -32,14 +35,15 @@ import lombok.RequiredArgsConstructor;
  * applied straight away. Nothing is asked of the diner in {@code no_show}: the penalty
  * is per guest and only ever taken on an absence, so its basis simply follows the covers.
  *
- * <p><strong>Up, mode {@code booking_fee}</strong> — turned down for now with
- * {@code top_up_required} when a fee is actually riding on the reservation. The fee was
- * priced per guest, so the extra guests are owed; collecting that top-up is its own piece
- * of work. A fee staff waived, refunded, or never asked for leaves nothing to top up, and
- * the rise goes through like any other.
+ * <p><strong>Up, mode {@code booking_fee}</strong> — a table check, then the difference
+ * is collected before the rise takes effect, when a fee is actually riding on the
+ * reservation. The fee was priced per guest, so the extra guests are owed. A fee staff
+ * waived, refunded, or never asked for leaves nothing to top up, and the rise goes
+ * through like any other.
  *
  * <p>The table check is a finding, not a booking: nothing is held or pre-reserved for the
  * reservation, and the reservation is not moved onto the table that made the change pass.
+ * It will therefore be made again when the top-up is settled.
  */
 @Component
 @RequiredArgsConstructor
@@ -47,32 +51,53 @@ public class PartySizeChangePolicy {
 
     private final RestaurantTableRepository tableRepository;
     private final ReservationRepository reservationRepository;
+    private final ReservationChargeRepository charges;
 
     /**
-     * Checks a change of party size against the rule, throwing rather than returning a
-     * verdict: every caller writing the new value has to have passed through here.
+     * Weighs a change of party size against the rule.
+     *
+     * <p>Returns only when the reservation is left in a state the caller can act on; an
+     * outright refusal throws, so no caller can write a new size without having passed
+     * through here and read the answer.
      *
      * @param reservation    the reservation as stored, still carrying its current party size
      * @param newPartySize   the requested number of covers
      * @param startsAt       the slot the reservation will occupy once saved
      * @param endsAt         end of that same slot
-     * @throws PartySizeChangeRejectedException when the change cannot be applied as it stands
+     * @throws PartySizeChangeRejectedException when the change cannot be entertained at all
      */
-    public void check(Reservation reservation, Integer newPartySize,
+    public PartySizeChange decide(Reservation reservation, Integer newPartySize,
             OffsetDateTime startsAt, OffsetDateTime endsAt) {
         Integer current = reservation.getPartySize();
         if (newPartySize == null || current == null || newPartySize <= current) {
             // Unchanged or down: nothing to check, and nothing to refund.
-            return;
+            return PartySizeChange.APPLY;
         }
 
+        requireNoTopUpAlreadyRunning(reservation);
         requireSeatableTable(reservation, newPartySize, startsAt, endsAt);
 
         if (GuaranteeMode.fromCode(reservation.getGuaranteeMode()) == GuaranteeMode.BOOKING_FEE
                 && owesABookingFee(reservation)) {
+            return PartySizeChange.COLLECT_TOP_UP;
+        }
+        return PartySizeChange.APPLY;
+    }
+
+    /**
+     * One request at a time, per reservation.
+     *
+     * <p>Two live links would each be payable, for one table: the diner could settle both
+     * and someone would have to hand one back by hand. The staff member is told the first
+     * request is still running rather than silently replacing it.
+     */
+    private void requireNoTopUpAlreadyRunning(Reservation reservation) {
+        boolean pending = charges.existsByReservationIdAndKindAndStatus(
+                reservation.getId(), ChargeKind.PARTY_SIZE_TOP_UP, ChargeStatus.PENDING);
+        if (pending) {
             throw new PartySizeChangeRejectedException(
-                    PartySizeChangeRejectedException.TOP_UP_REQUIRED,
-                    "The booking fee was priced per guest: the extra guests have to be paid for first");
+                    PartySizeChangeRejectedException.TOP_UP_PENDING,
+                    "A top-up is already awaiting settlement on this reservation");
         }
     }
 

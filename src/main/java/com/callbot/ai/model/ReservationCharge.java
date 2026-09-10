@@ -96,6 +96,27 @@ public class ReservationCharge {
     @Column(name = "payout_id")
     private UUID payoutId;
 
+    /**
+     * The diner's own link to this charge, on a top-up. Single use, and never the token
+     * that opened the first payment: one link must not settle the other's debt.
+     *
+     * <p>A booking fee is reached through the reservation's token instead — it exists
+     * before any charge does.
+     */
+    @Column(name = "payment_token")
+    private String paymentToken;
+
+    /** When {@link #paymentToken} stops working. Thirty minutes, on a top-up. */
+    @Column(name = "token_expires_at")
+    private OffsetDateTime tokenExpiresAt;
+
+    /**
+     * The party size this top-up buys. The reservation stays at its current size until
+     * the money is in and a table is confirmed free, so the target lives here.
+     */
+    @Column(name = "target_party_size")
+    private Integer targetPartySize;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -114,6 +135,17 @@ public class ReservationCharge {
 
     public boolean isBookingFee() {
         return ChargeKind.BOOKING_FEE.equals(kind);
+    }
+
+    public boolean isPartySizeTopUp() {
+        return ChargeKind.PARTY_SIZE_TOP_UP.equals(kind);
+    }
+
+    /** Whether this top-up can still be settled: nothing paid yet, and time left. */
+    public boolean isOpenFor(OffsetDateTime now) {
+        return ChargeStatus.PENDING.equals(status)
+                && tokenExpiresAt != null
+                && tokenExpiresAt.isAfter(now);
     }
 
     @PrePersist
