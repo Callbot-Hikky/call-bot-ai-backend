@@ -32,6 +32,7 @@ public class GuaranteeExpiryJob {
     private static final Logger log = LoggerFactory.getLogger(GuaranteeExpiryJob.class);
 
     private final ReservationRepository reservationRepository;
+    private final PartySizeTopUpService topUps;
     private final ApplicationEventPublisher events;
 
     @Scheduled(fixedDelayString = "${app.guarantee.expiry-scan-interval-ms:60000}")
@@ -43,6 +44,11 @@ public class GuaranteeExpiryJob {
             return;
         }
         for (Reservation reservation : expired) {
+            // The table is going back on sale; a request to grow the party on it can
+            // only be for nothing. Rare — it takes a rise on a hold — but it would
+            // otherwise leave a payable link on a released reservation.
+            topUps.lapsePendingFor(reservation.getId(), "the reservation's hold expired");
+
             reservation.setStatus(ReservationStatus.CANCELLED);
             reservation.setGuaranteeStatus(GuaranteeStatus.EXPIRED);
             reservation.setCancelledAt(OffsetDateTime.now());

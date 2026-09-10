@@ -1,10 +1,6 @@
 package com.callbot.ai.service;
 
 import java.time.OffsetDateTime;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
 
 import org.springframework.stereotype.Component;
 
@@ -14,10 +10,7 @@ import com.callbot.ai.model.ChargeStatus;
 import com.callbot.ai.model.GuaranteeMode;
 import com.callbot.ai.model.GuaranteeStatus;
 import com.callbot.ai.model.Reservation;
-import com.callbot.ai.model.RestaurantTable;
 import com.callbot.ai.repository.ReservationChargeRepository;
-import com.callbot.ai.repository.ReservationRepository;
-import com.callbot.ai.repository.RestaurantTableRepository;
 
 import lombok.RequiredArgsConstructor;
 
@@ -44,13 +37,16 @@ import lombok.RequiredArgsConstructor;
  * <p>The table check is a finding, not a booking: nothing is held or pre-reserved for the
  * reservation, and the reservation is not moved onto the table that made the change pass.
  * It will therefore be made again when the top-up is settled.
+ *
+ * <p><strong>Down, under a running request</strong> — applied, and the request dropped
+ * with it. It priced the difference against the party as it stood; move that party and
+ * the live link asks for a number nobody has requested any more.
  */
 @Component
 @RequiredArgsConstructor
 public class PartySizeChangePolicy {
 
-    private final RestaurantTableRepository tableRepository;
-    private final ReservationRepository reservationRepository;
+    private final TableAvailability availability;
     private final ReservationChargeRepository charges;
 
     /**
@@ -69,9 +65,16 @@ public class PartySizeChangePolicy {
     public PartySizeChange decide(Reservation reservation, Integer newPartySize,
             OffsetDateTime startsAt, OffsetDateTime endsAt) {
         Integer current = reservation.getPartySize();
-        if (newPartySize == null || current == null || newPartySize <= current) {
-            // Unchanged or down: nothing to check, and nothing to refund.
+        if (newPartySize == null || current == null || newPartySize == current.intValue()) {
+            // Nothing moved, so nothing a running request was priced against moved either.
             return PartySizeChange.APPLY;
+        }
+        if (newPartySize < current) {
+            // Down: nothing to check, and nothing to refund. But a request outstanding
+            // was priced against the party that is about to change, so it goes with it.
+            return topUpIsRunning(reservation)
+                    ? PartySizeChange.APPLY_AND_LAPSE_TOP_UP
+                    : PartySizeChange.APPLY;
         }
 
         requireNoTopUpAlreadyRunning(reservation);
@@ -92,13 +95,16 @@ public class PartySizeChangePolicy {
      * request is still running rather than silently replacing it.
      */
     private void requireNoTopUpAlreadyRunning(Reservation reservation) {
-        boolean pending = charges.existsByReservationIdAndKindAndStatus(
-                reservation.getId(), ChargeKind.PARTY_SIZE_TOP_UP, ChargeStatus.PENDING);
-        if (pending) {
+        if (topUpIsRunning(reservation)) {
             throw new PartySizeChangeRejectedException(
                     PartySizeChangeRejectedException.TOP_UP_PENDING,
                     "A top-up is already awaiting settlement on this reservation");
         }
+    }
+
+    private boolean topUpIsRunning(Reservation reservation) {
+        return charges.existsByReservationIdAndKindAndStatus(
+                reservation.getId(), ChargeKind.PARTY_SIZE_TOP_UP, ChargeStatus.PENDING);
     }
 
     /**
@@ -123,26 +129,18 @@ public class PartySizeChangePolicy {
     /**
      * A rise to M covers is only accepted if a table that can seat M is free over the slot.
      *
-     * <p>The reservation's own table does not count as taken by itself: a table already
-     * large enough stays a valid candidate, and the party simply stays where it is.
+     * <p>A finding, not a booking: nothing is held, and the reservation is not moved onto
+     * the table that made the change pass. The same question is put again, in the same
+     * place, when the money for the rise lands.
      */
     private void requireSeatableTable(Reservation reservation, int newPartySize,
             OffsetDateTime startsAt, OffsetDateTime endsAt) {
-        List<RestaurantTable> candidates = tableRepository
-                .findByRestaurantId(reservation.getRestaurantId()).stream()
-                .filter(t -> Boolean.TRUE.equals(t.getIsActive()))
-                .filter(t -> t.getCapacity() != null && t.getCapacity() >= newPartySize)
-                .toList();
-
-        if (!candidates.isEmpty()) {
-            Set<UUID> busy = new HashSet<>(reservationRepository.findBusyTableIdsExcluding(
-                    reservation.getRestaurantId(), startsAt, endsAt, reservation.getId()));
-            if (candidates.stream().anyMatch(t -> !busy.contains(t.getId()))) {
-                return;
-            }
+        boolean seatable = availability.canSeat(reservation.getRestaurantId(), newPartySize,
+                startsAt, endsAt, reservation.getId());
+        if (!seatable) {
+            throw new PartySizeChangeRejectedException(
+                    PartySizeChangeRejectedException.NO_TABLE_AVAILABLE,
+                    "No table for " + newPartySize + " guests is free on that time slot");
         }
-        throw new PartySizeChangeRejectedException(
-                PartySizeChangeRejectedException.NO_TABLE_AVAILABLE,
-                "No table for " + newPartySize + " guests is free on that time slot");
     }
 }

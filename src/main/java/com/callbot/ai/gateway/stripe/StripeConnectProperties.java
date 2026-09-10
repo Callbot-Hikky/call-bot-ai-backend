@@ -13,6 +13,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *
  * <p>{@code returnUrl} / {@code refreshUrl} are the back-office pages Stripe sends the
  * restaurateur back to at the end (or on expiry) of onboarding.
+ *
+ * <p>{@code topUpSuccessUrl} is a page of its own because paying a top-up does not mean
+ * what paying a booking fee means. A booking fee bought a table; a top-up bought the
+ * right to be moved to a larger one <em>if</em> there is one, and the ordinary success
+ * page would tell the diner their reservation is being confirmed when it may be about
+ * to be refunded instead.
  */
 @ConfigurationProperties(prefix = "app.stripe-connect")
 public record StripeConnectProperties(
@@ -20,6 +26,7 @@ public record StripeConnectProperties(
         String returnUrl,
         String refreshUrl,
         String successUrl,
+        String topUpSuccessUrl,
         String cancelUrl,
         String country) {
 

@@ -15,6 +15,17 @@ public enum PartySizeChange {
     APPLY,
 
     /**
+     * Write the new size, and drop the request the old one was priced against.
+     *
+     * <p>Only a fall reaches this: a rise under a running request is refused outright.
+     * The request asked for the difference between the party as it stood and a larger
+     * one; move the party underneath it and the amount on that live link stops standing
+     * for anything. Better to end it than to leave the diner able to buy a number nobody
+     * asked for any more.
+     */
+    APPLY_AND_LAPSE_TOP_UP,
+
+    /**
      * Leave the reservation exactly as it is and collect the difference first.
      *
      * <p>The party stays at its current size, on its current table, confirmed, until the

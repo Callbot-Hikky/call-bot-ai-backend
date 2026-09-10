@@ -208,7 +208,7 @@ public class ReservationPaymentService {
                 ? null
                 : charges.findByStripeSessionId(paid.sessionId()).orElse(null);
         if (bySession != null && bySession.isPartySizeTopUp()) {
-            topUps.markPaid(bySession, paid.paymentIntentId());
+            topUps.settle(bySession, paid.paymentIntentId());
             return;
         }
 
@@ -339,6 +339,12 @@ public class ReservationPaymentService {
             return new CancellationResponse(true, alreadyRefunded > 0, alreadyRefunded);
         }
         requireStillCancellable(reservation);
+
+        // A request still outstanding never collected anything, so there is nothing to
+        // give back — only a live link to close before the diner pays for a service that
+        // is not happening. One already settled is money, and goes through the refund
+        // rules below with the rest: it needs no handling of its own.
+        topUps.lapsePendingFor(reservation.getId(), "the diner cancelled the reservation");
 
         int refunded = isRefundable(reservation) ? refundEverythingPaid(reservation) : 0;
 

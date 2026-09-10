@@ -59,6 +59,7 @@ app:
     refresh-url: ${STRIPE_CONNECT_REFRESH_URL:http://localhost:4200/parametres/paiements?onboarding=refresh}
     # Pages the diner lands on after (or instead of) paying their booking fee.
     success-url: ${STRIPE_CONNECT_SUCCESS_URL:http://localhost:4200/client/reservations/payee}
+    top-up-success-url: ${STRIPE_CONNECT_TOP_UP_SUCCESS_URL:http://localhost:4200/client/reservations/complement-regle}
     cancel-url: ${STRIPE_CONNECT_CANCEL_URL:http://localhost:4200/client/reservations/paiement-annule}
     country: ${STRIPE_CONNECT_COUNTRY:FR}
   payout:

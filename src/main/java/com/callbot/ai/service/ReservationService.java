@@ -118,6 +118,9 @@ public class ReservationService {
      * it off to be paid for, and the reservation keeps the party it was sold with until
      * the money is in. Everything else in the request is still written — the staff member
      * correcting a note alongside the covers should not lose the note.
+     *
+     * <p>A fall does take effect, and takes any request outstanding with it: that request
+     * priced the difference against the party that has just changed.
      */
     public ReservationResponse update(UUID id, ReservationRequest request, boolean notify, String callerEmail) {
         Reservation reservation = find(id, callerEmail);
@@ -131,7 +134,7 @@ public class ReservationService {
         reservation.setCallId(request.callId());
         reservation.setStartsAt(request.startsAt());
         reservation.setEndsAt(request.endsAt());
-        if (verdict == PartySizeChange.APPLY) {
+        if (verdict != PartySizeChange.COLLECT_TOP_UP) {
             reservation.setPartySize(requestedPartySize);
         }
         if (request.status() != null) {
@@ -143,6 +146,11 @@ public class ReservationService {
         reservation.setNotes(request.notes());
         Reservation saved = reservationRepository.save(reservation);
 
+        if (verdict == PartySizeChange.APPLY_AND_LAPSE_TOP_UP) {
+            // The party this request was priced against has just moved. Leaving the link
+            // alive would let the diner buy a difference against a number that is gone.
+            topUps.lapsePendingFor(saved.getId(), "the party was revised down");
+        }
         if (verdict == PartySizeChange.COLLECT_TOP_UP) {
             // The diner is told about the money owed; a second "your booking changed"
             // message would announce a change that has not happened.
@@ -165,6 +173,9 @@ public class ReservationService {
         if (ReservationStatus.CANCELLED.equals(reservation.getStatus())) {
             return;
         }
+        // A request outstanding was for guests at a service that is not happening.
+        topUps.lapsePendingFor(reservation.getId(), "the reservation was cancelled");
+
         reservation.setStatus(ReservationStatus.CANCELLED);
         reservation.setCancelledAt(OffsetDateTime.now());
         reservationRepository.save(reservation);
