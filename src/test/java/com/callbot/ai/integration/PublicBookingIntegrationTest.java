@@ -66,6 +66,16 @@ class PublicBookingIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("no_table"));
 
+        // Le meme numero, un autre creneau le meme jour : refuse, le carnet ne se remplit pas d'un seul telephone.
+        String otherSlot = JsonPath.read(slots, "$.days[1].slots[3].startsAt");
+        mockMvc.perform(post("/api/public/restaurants/" + restaurantId + "/reservations")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"startsAt":"%s","partySize":2,"customer":{"firstName":"Nadia","phone":"0612345678"}}"""
+                        .formatted(otherSlot)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("already_booked"));
+
         // Le creneau pris n'est plus propose.
         String after = mockMvc.perform(get("/api/public/restaurants/" + restaurantId + "/slots?partySize=2"))
                 .andReturn().getResponse().getContentAsString();

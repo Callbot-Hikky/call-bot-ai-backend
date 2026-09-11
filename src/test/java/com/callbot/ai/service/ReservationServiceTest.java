@@ -129,7 +129,8 @@ class ReservationServiceTest {
         when(hoursRepository.findByRestaurantId(restaurantId)).thenReturn(List.of());
         when(tableRepository.findByRestaurantId(restaurantId)).thenReturn(List.of(table));
         when(reservationRepository.findBusyTableIdsExcluding(any(), any(), any(), any())).thenReturn(List.of());
-        LocalDate from = LocalDate.of(2030, 1, 1);
+        // Demain : un jour entier dans le futur, quel que soit le moment ou le test tourne.
+        LocalDate from = LocalDate.now(java.time.ZoneId.of("Europe/Paris")).plusDays(1);
 
         RescheduleSlotsResponse viaReschedule = reservationService.rescheduleSlots(reservationId, from, null);
         RescheduleSlotsResponse direct = reservationService.slotsFor(restaurant, from, 2,
