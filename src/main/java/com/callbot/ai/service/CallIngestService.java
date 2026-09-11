@@ -24,6 +24,7 @@ import com.callbot.ai.repository.CustomerRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 
+import com.callbot.ai.util.PhoneNumbers;
 import lombok.RequiredArgsConstructor;
 
 /**
@@ -110,10 +111,10 @@ public class CallIngestService {
 
     /** Name and email are only updated when provided, to avoid overwriting data with null. */
     private Customer upsertCustomer(UUID restaurantId, Caller caller) {
-        Customer customer = customerRepository.findByRestaurantIdAndPhone(restaurantId, caller.phone())
+        Customer customer = customerRepository.findByRestaurantIdAndPhone(restaurantId, PhoneNumbers.normalize(caller.phone()))
                 .orElseGet(() -> Customer.builder()
                         .restaurantId(restaurantId)
-                        .phone(caller.phone())
+                        .phone(PhoneNumbers.normalize(caller.phone()))
                         .build());
         if (caller.firstName() != null) {
             customer.setFirstName(caller.firstName());
