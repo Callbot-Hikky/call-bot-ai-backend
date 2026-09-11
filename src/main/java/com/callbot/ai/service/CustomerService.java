@@ -12,6 +12,7 @@ import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.model.Customer;
 import com.callbot.ai.repository.CustomerRepository;
 import com.callbot.ai.repository.RestaurantRepository;
+import com.callbot.ai.util.PhoneNumbers;
 
 import lombok.RequiredArgsConstructor;
 
@@ -28,11 +29,12 @@ public class CustomerService {
         // Upsert par (restaurant, phone) : un habitue (deja appele par le callbot
         // ou reserve auparavant) reutilise sa fiche au lieu de violer la contrainte
         // d'unicite. On ne remplace que les champs fournis (pas d'ecrasement par null).
+        String phone = PhoneNumbers.normalize(request.phone());
         Customer customer = customerRepository
-                .findByRestaurantIdAndPhone(request.restaurantId(), request.phone())
+                .findByRestaurantIdAndPhone(request.restaurantId(), phone)
                 .orElseGet(() -> Customer.builder()
                         .restaurantId(request.restaurantId())
-                        .phone(request.phone())
+                        .phone(phone)
                         .build());
         if (request.firstName() != null) {
             customer.setFirstName(request.firstName());
@@ -53,7 +55,7 @@ public class CustomerService {
     // fiche gagnante quand deux creations concurrentes du meme numero se croisent.
     @Transactional(readOnly = true)
     public CustomerResponse findByPhone(UUID restaurantId, String phone) {
-        return customerRepository.findByRestaurantIdAndPhone(restaurantId, phone)
+        return customerRepository.findByRestaurantIdAndPhone(restaurantId, PhoneNumbers.normalize(phone))
                 .map(CustomerResponse::from)
                 .orElseThrow(() -> new ResourceNotFoundException("Customer", phone));
     }
@@ -73,7 +75,7 @@ public class CustomerService {
 
     public CustomerResponse update(UUID id, CustomerRequest request) {
         Customer customer = find(id);
-        customer.setPhone(request.phone());
+        customer.setPhone(PhoneNumbers.normalize(request.phone()));
         customer.setFirstName(request.firstName());
         customer.setLastName(request.lastName());
         customer.setEmail(request.email());
