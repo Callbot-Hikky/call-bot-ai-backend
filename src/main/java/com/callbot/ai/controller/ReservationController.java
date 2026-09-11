@@ -115,5 +115,4 @@ public class ReservationController {
     public void delete(@PathVariable UUID id, Authentication authentication) {
         reservationService.delete(id, AuthenticatedCaller.emailOf(authentication));
     }
-
 }

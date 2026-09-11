@@ -46,7 +46,6 @@ class CustomerServiceTest {
 
     @Test
     void create_whenRestaurantExists_saves() {
-        
         when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "+33600000000"))
                 .thenReturn(Optional.empty());
         when(customerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
@@ -66,7 +65,6 @@ class CustomerServiceTest {
                 .phone("+33600000000")
                 .firstName("Alice")
                 .build();
-        
         when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "+33600000000"))
                 .thenReturn(Optional.of(existing));
         when(customerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
