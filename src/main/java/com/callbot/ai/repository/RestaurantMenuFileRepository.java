@@ -23,15 +23,24 @@ public interface RestaurantMenuFileRepository extends JpaRepository<RestaurantMe
 
     long countByRestaurantIdAndKind(UUID restaurantId, String kind);
 
+    /**
+     * Verrou transactionnel par restaurant : deux envois simultanes ne peuvent
+     * pas depasser huit images ni prendre la meme position. Un verrou consultatif
+     * plutot qu'un index unique, car le reordonnancement passe par des positions
+     * transitoirement dupliquees. Libere avec la transaction.
+     */
+    @Query(value = "select pg_advisory_xact_lock(hashtext(cast(:restaurantId as text))) is null", nativeQuery = true)
+    boolean lockMenu(@Param("restaurantId") UUID restaurantId);
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("delete from RestaurantMenuFile f where f.restaurantId = :restaurantId and f.kind = :kind")
     void deleteByRestaurantIdAndKind(@Param("restaurantId") UUID restaurantId, @Param("kind") String kind);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("delete from RestaurantMenuFile f where f.id = :id and f.restaurantId = :restaurantId")
-    int deleteByIdAndRestaurantId(@Param("id") UUID id, @Param("restaurantId") UUID restaurantId);
+    void deleteByIdAndRestaurantId(@Param("id") UUID id, @Param("restaurantId") UUID restaurantId);
 
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Modifying(flushAutomatically = true)
     @Query("update RestaurantMenuFile f set f.position = :position where f.id = :id and f.restaurantId = :restaurantId")
-    int updatePosition(@Param("id") UUID id, @Param("restaurantId") UUID restaurantId, @Param("position") int position);
+    void updatePosition(@Param("id") UUID id, @Param("restaurantId") UUID restaurantId, @Param("position") int position);
 }

@@ -60,7 +60,11 @@ class MenuServiceTest {
     }
 
     private static byte[] png() {
-        byte[] bytes = new byte[64];
+        return png(64);
+    }
+
+    private static byte[] png(int size) {
+        byte[] bytes = new byte[size];
         byte[] magic = {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
         System.arraycopy(magic, 0, bytes, 0, magic.length);
         return bytes;
@@ -134,6 +138,18 @@ class MenuServiceTest {
         assertThat(response.mode()).isEqualTo("manual");
         assertThat(response.manual().get("sections").get(0).get("name").asString()).isEqualTo("Entrees");
         assertThat(response.files()).isEmpty();
+    }
+
+    @Test
+    void upsert_manualOverHalfAMegabyte_isRejectedWith413() throws Exception {
+        restaurantExists();
+        when(menuRepository.findById(restaurantId)).thenReturn(Optional.empty());
+        String huge = "{\"version\":1,\"note\":\"" + "x".repeat(MenuService.MANUAL_MAX_CHARS) + "\"}";
+
+        assertThatThrownBy(() -> menuService.upsert(restaurantId, new MenuRequest("none", objectMapper.readTree(huge))))
+                .isInstanceOf(MenuFileException.class)
+                .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE));
+        verify(menuRepository, never()).save(any());
     }
 
     @Test
@@ -233,6 +249,16 @@ class MenuServiceTest {
         assertThatThrownBy(() -> menuService.upload(restaurantId, "<svg xmlns='x'></svg>".getBytes(StandardCharsets.US_ASCII)))
                 .isInstanceOf(MenuFileException.class)
                 .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.UNSUPPORTED_MEDIA_TYPE));
+        verify(fileRepository, never()).save(any());
+    }
+
+    @Test
+    void upload_imageOverFiveMegabytes_isRejectedWith413() {
+        restaurantExists();
+
+        assertThatThrownBy(() -> menuService.upload(restaurantId, png(5 * 1024 * 1024 + 1)))
+                .isInstanceOf(MenuFileException.class)
+                .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE));
         verify(fileRepository, never()).save(any());
     }
 

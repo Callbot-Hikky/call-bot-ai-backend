@@ -47,6 +47,9 @@ import lombok.RequiredArgsConstructor;
 public class MenuService {
 
     private static final MenuLimits LIMITS = MenuLimits.DEFAULT;
+    // Le front plafonne a 20 sections de 50 plats (nom 80, description 200) : 512 Ko couvre
+    // tres largement une carte legitime, et ferme la porte a un document arbitraire.
+    static final int MANUAL_MAX_CHARS = 512 * 1024;
 
     private final RestaurantMenuRepository menuRepository;
     private final RestaurantMenuFileRepository fileRepository;
@@ -75,6 +78,10 @@ public class MenuService {
                 .orElseGet(() -> RestaurantMenu.builder().restaurantId(restaurantId).build());
         String content = manual != null ? manual.toString()
                 : (menu.getManualContent() == null ? "{}" : menu.getManualContent());
+        if (content.length() > MANUAL_MAX_CHARS) {
+            throw new MenuFileException(HttpStatus.PAYLOAD_TOO_LARGE, "manual_too_large",
+                    "The manual menu exceeds " + MANUAL_MAX_CHARS + " characters");
+        }
         requireModeReady(restaurantId, request.mode(), content);
         menu.setMode(request.mode());
         menu.setManualContent(content);
@@ -88,6 +95,7 @@ public class MenuService {
      */
     public MenuResponse upload(UUID restaurantId, byte[] bytes) {
         requireRestaurant(restaurantId);
+        fileRepository.lockMenu(restaurantId);
         MenuFileType type = MenuFileType.detect(bytes)
                 .orElseThrow(() -> new MenuFileException(HttpStatus.UNSUPPORTED_MEDIA_TYPE,
                         "unsupported_file_type", "Only PDF, JPEG, PNG and WebP files are accepted"));
@@ -127,6 +135,7 @@ public class MenuService {
      */
     public MenuResponse deleteFile(UUID restaurantId, UUID fileId) {
         requireRestaurant(restaurantId);
+        fileRepository.lockMenu(restaurantId);
         MenuFileSummary file = fileRepository.findSummaryByIdAndRestaurantId(fileId, restaurantId)
                 .orElseThrow(() -> new ResourceNotFoundException("MenuFile", fileId));
         fileRepository.deleteByIdAndRestaurantId(fileId, restaurantId);
@@ -149,6 +158,7 @@ public class MenuService {
      */
     public MenuResponse reorder(UUID restaurantId, MenuFileOrderRequest request) {
         requireRestaurant(restaurantId);
+        fileRepository.lockMenu(restaurantId);
         List<MenuFileSummary> images = images(restaurantId);
         List<UUID> ids = request.fileIds();
         Set<UUID> expected = images.stream().map(MenuFileSummary::getId).collect(Collectors.toSet());
