@@ -154,6 +154,13 @@ public class ReservationService {
     @Transactional(readOnly = true)
     public RescheduleSlotsResponse slotsFor(Restaurant restaurant, LocalDate from, int partySize,
             Duration duration, UUID excludeReservationId) {
+        return slotsFor(restaurant, from, BookingPolicy.WINDOW_DAYS, partySize, duration, excludeReservationId);
+    }
+
+    /** Meme calcul sur {@code dayCount} jours : la creation en ligne ne verifie que le jour demande. */
+    @Transactional(readOnly = true)
+    public RescheduleSlotsResponse slotsFor(Restaurant restaurant, LocalDate from, int dayCount, int partySize,
+            Duration duration, UUID excludeReservationId) {
         ZoneId zone = ZoneId.of(restaurant.getTimezone());
         List<RestaurantHours> hours = hoursRepository.findByRestaurantId(restaurant.getId());
         List<RestaurantTable> candidates = tableRepository.findByRestaurantId(restaurant.getId()).stream()
@@ -162,8 +169,8 @@ public class ReservationService {
                 .sorted(Comparator.comparing(RestaurantTable::getCapacity))
                 .toList();
 
-        List<RescheduleSlotsResponse.Day> days = new ArrayList<>(BookingPolicy.WINDOW_DAYS);
-        for (int i = 0; i < BookingPolicy.WINDOW_DAYS; i++) {
+        List<RescheduleSlotsResponse.Day> days = new ArrayList<>(dayCount);
+        for (int i = 0; i < dayCount; i++) {
             LocalDate date = from.plusDays(i);
             days.add(new RescheduleSlotsResponse.Day(date,
                     slotsForDay(restaurant, zone, hours, candidates, date, duration, excludeReservationId)));
