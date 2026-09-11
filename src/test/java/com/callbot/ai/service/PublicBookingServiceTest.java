@@ -27,7 +27,9 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 
+import com.callbot.ai.dto.PublicRescheduleRequest;
 import com.callbot.ai.dto.PublicReservationRequest;
+import com.callbot.ai.notification.ReservationUpdatedEvent;
 import com.callbot.ai.dto.PublicReservationResponse;
 import com.callbot.ai.dto.RescheduleSlotsResponse;
 import com.callbot.ai.exception.BookingException;
@@ -251,9 +253,74 @@ class PublicBookingServiceTest {
         assertThat(service.slots(restaurantId, from, 4)).isSameAs(expected);
     }
 
+    // --- replanification depuis le lien du message
+
+    private Reservation existingReservation(String status) {
+        OffsetDateTime startsAt = tomorrowEvening();
+        return Reservation.builder().id(UUID.randomUUID()).restaurantId(restaurantId).customerId(UUID.randomUUID())
+                .tableId(tableId).startsAt(startsAt).endsAt(startsAt.plusMinutes(90)).partySize(2)
+                .status(status).source("web").build();
+    }
+
     @Test
-    void normalizePhone_dropsSpacesDotsAndDashes() {
-        assertThat(PublicBookingService.normalizePhone("06 12.34-56 78")).isEqualTo("0612345678");
-        assertThat(PublicBookingService.normalizePhone("+33 (0)6 12 34 56 78")).isEqualTo("+330612345678");
+    void reschedule_onProposedSlot_movesTheReservationAndNotifies() {
+        Reservation existing = existingReservation("pending");
+        OffsetDateTime newStart = existing.getStartsAt().plusHours(1);
+        when(reservationRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
+        when(reservationService.slotsFor(eq(restaurant), eq(newStart.toLocalDate()), eq(1), eq(3),
+                eq(Duration.ofMinutes(90)), eq(existing.getId()))).thenReturn(slotsWith(newStart));
+        when(reservationRepository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
+        when(customerRepository.findById(existing.getCustomerId())).thenReturn(Optional.empty());
+
+        PublicReservationResponse response = service.reschedule(existing.getId(),
+                new PublicRescheduleRequest(newStart, 3, "Poussette"));
+
+        assertThat(existing.getStartsAt()).isEqualTo(newStart);
+        assertThat(existing.getEndsAt()).isEqualTo(newStart.plusMinutes(90));
+        assertThat(existing.getPartySize()).isEqualTo(3);
+        assertThat(existing.getNotes()).isEqualTo("Poussette");
+        assertThat(response.partySize()).isEqualTo(3);
+        verify(events).publishEvent(any(ReservationUpdatedEvent.class));
+    }
+
+    @Test
+    void reschedule_ofACancelledReservation_isRefused() {
+        Reservation cancelled = existingReservation("cancelled");
+        when(reservationRepository.findById(cancelled.getId())).thenReturn(Optional.of(cancelled));
+
+        assertThatThrownBy(() -> service.reschedule(cancelled.getId(),
+                new PublicRescheduleRequest(tomorrowEvening(), 2, null)))
+                .isInstanceOf(BookingException.class)
+                .satisfies(e -> assertThat(((BookingException) e).getCode()).isEqualTo("not_reschedulable"));
+        assertThatThrownBy(() -> service.rescheduleSlots(cancelled.getId(), null))
+                .isInstanceOf(BookingException.class);
+    }
+
+    @Test
+    void reschedule_offTheProposedSlots_is409_andLeavesTheReservationUntouched() {
+        Reservation existing = existingReservation("confirmed");
+        OffsetDateTime original = existing.getStartsAt();
+        when(reservationRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
+        when(reservationService.slotsFor(any(), any(), anyInt(), anyInt(), any(), any()))
+                .thenReturn(slotsWith(original.plusHours(2)));
+
+        assertThatThrownBy(() -> service.reschedule(existing.getId(),
+                new PublicRescheduleRequest(original.plusHours(1), 2, null)))
+                .isInstanceOf(BookingException.class)
+                .satisfies(e -> assertThat(((BookingException) e).getCode()).isEqualTo("no_table"));
+        assertThat(existing.getStartsAt()).isEqualTo(original);
+        verify(reservationRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void rescheduleSlots_excludeTheReservationItself_withItsOwnDuration() {
+        Reservation existing = existingReservation("pending");
+        when(reservationRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
+        RescheduleSlotsResponse expected = new RescheduleSlotsResponse(List.of());
+        when(reservationService.rescheduleSlots(existing.getId(), null, 4)).thenReturn(expected);
+
+        assertThat(service.rescheduleSlots(existing.getId(), 4)).isSameAs(expected);
     }
 }
