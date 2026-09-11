@@ -12,7 +12,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.OffsetDateTime;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -26,11 +25,9 @@ import org.springframework.context.ApplicationEventPublisher;
 
 import com.callbot.ai.dto.GuestModificationRequest;
 import com.callbot.ai.dto.GuestModificationResponse;
+import com.callbot.ai.dto.PublicModificationResponse;
 import com.callbot.ai.exception.InvalidRequestException;
 import com.callbot.ai.exception.ResourceNotFoundException;
-import com.callbot.ai.gateway.stripe.StripeConnectGateway;
-import com.callbot.ai.model.ChargeKind;
-import com.callbot.ai.model.ChargeStatus;
 import com.callbot.ai.model.GuaranteeMode;
 import com.callbot.ai.model.GuaranteeStatus;
 import com.callbot.ai.model.Reservation;
@@ -39,7 +36,6 @@ import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.model.RestaurantTable;
 import com.callbot.ai.notification.ReservationModifiedByGuestEvent;
-import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 
@@ -63,8 +59,6 @@ class ReservationModificationServiceTest {
     @Mock
     private RestaurantRepository restaurants;
     @Mock
-    private ReservationChargeRepository charges;
-    @Mock
     private ReservationService reservationService;
     @Mock
     private PartySizeChangePolicy partySizeChangePolicy;
@@ -73,7 +67,7 @@ class ReservationModificationServiceTest {
     @Mock
     private TableAvailability availability;
     @Mock
-    private StripeConnectGateway connect;
+    private PartySizeRefund partySizeRefund;
     @Mock
     private ApplicationEventPublisher events;
 
@@ -85,8 +79,9 @@ class ReservationModificationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ReservationModificationService(reservations, restaurants, charges,
-                reservationService, partySizeChangePolicy, topUps, availability, connect, events);
+        service = new ReservationModificationService(reservations, restaurants,
+                reservationService, partySizeChangePolicy, topUps, partySizeRefund,
+                availability, events);
     }
 
     /** A paid table of six, 15,00 € a cover, still a month away. */
@@ -120,25 +115,10 @@ class ReservationModificationServiceTest {
         lenient().when(partySizeChangePolicy.decide(any(), any(), any(), any())).thenReturn(decision);
     }
 
-    /** The one booking fee this reservation paid, still awaiting its payout. */
-    private ReservationCharge bookingFee() {
-        return ReservationCharge.builder()
-                .id(UUID.randomUUID())
-                .reservationId(reservationId)
-                .kind(ChargeKind.BOOKING_FEE)
-                .status(ChargeStatus.PAID)
-                .amountCents(9000)
-                .applicationFeeCents(900)
-                .currency("eur")
-                .paidAt(OffsetDateTime.now().minusDays(1))
-                .stripePaymentIntentId("pi_booking")
-                .payoutEligibleAt(ENDS_AT.plusDays(1))
-                .build();
-    }
-
-    private void paidCharges(ReservationCharge... rows) {
-        lenient().when(charges.findByReservationIdAndStatus(reservationId, ChargeStatus.PAID))
-                .thenReturn(List.of(rows));
+    /** What the shared refund says it handed back, whatever the register holds. */
+    private void refundsOnAFall(int cents) {
+        lenient().when(partySizeRefund.handBackCoversGivenUp(any(), anyInt(), anyInt()))
+                .thenReturn(cents);
     }
 
     private void roomFor(int partySize, OffsetDateTime startsAt, RestaurantTable table) {
@@ -172,7 +152,7 @@ class ReservationModificationServiceTest {
         Reservation reservation = reservation();
         stored(reservation);
         verdict(PartySizeChange.APPLY);
-        paidCharges(bookingFee());
+        refundsOnAFall(3000);
 
         apply(5, null);
         apply(4, null);
@@ -208,6 +188,32 @@ class ReservationModificationServiceTest {
         stored(reservation);
 
         assertThatThrownBy(() -> apply(4, null)).isInstanceOf(InvalidRequestException.class);
+    }
+
+    @Test
+    void describe_onACancelledBooking_handsBackNothingButWhoToCall() {
+        // The link outlived what it pointed at and goes on being a URL in an old message.
+        Reservation reservation = reservation();
+        reservation.setStatus(ReservationStatus.CANCELLED);
+        stored(reservation);
+
+        PublicModificationResponse view = service.describe(TOKEN);
+
+        assertThat(view.restaurantName()).isEqualTo("Chez Test");
+        assertThat(view.open()).isFalse();
+        assertThat(view.startsAt()).isNull();
+        assertThat(view.partySize()).isNull();
+        assertThat(view.centsPerGuest()).isNull();
+    }
+
+    @Test
+    void describe_onAServiceAlreadyPast_handsBackNothingEither() {
+        Reservation reservation = reservation();
+        reservation.setStartsAt(OffsetDateTime.now().minusHours(3));
+        reservation.setEndsAt(OffsetDateTime.now().minusHours(1));
+        stored(reservation);
+
+        assertThat(service.describe(TOKEN).partySize()).isNull();
     }
 
     @Test
@@ -283,7 +289,7 @@ class ReservationModificationServiceTest {
         Reservation reservation = reservation();
         stored(reservation);
         verdict(PartySizeChange.APPLY);
-        paidCharges(bookingFee());
+        refundsOnAFall(3000);
 
         apply(4, null);
 
@@ -293,147 +299,8 @@ class ReservationModificationServiceTest {
 
     // --- The party falling ----------------------------------------------------
 
-    @Test
-    void aFallingParty_getsTheCoversItRemovedBack() {
-        Reservation reservation = reservation();
-        stored(reservation);
-        verdict(PartySizeChange.APPLY);
-        ReservationCharge fee = bookingFee();
-        paidCharges(fee);
-
-        GuestModificationResponse result = apply(4, null);
-
-        // Two covers at 15,00 €.
-        assertThat(result.refundedAmountCents()).isEqualTo(3000);
-        assertThat(fee.getRefundedAmountCents()).isEqualTo(3000);
-        verify(connect).refundPartially(eq("pi_booking"), eq(3000), anyString());
-    }
-
-    @Test
-    void aFallingParty_drawsFromWhatWasPaidLast() {
-        // The covers being removed are the ones most recently added, so the top-up that
-        // bought them is what gives way first.
-        Reservation reservation = reservation();
-        stored(reservation);
-        verdict(PartySizeChange.APPLY);
-        ReservationCharge topUp = ReservationCharge.builder()
-                .id(UUID.randomUUID())
-                .reservationId(reservationId)
-                .kind(ChargeKind.PARTY_SIZE_TOP_UP)
-                .status(ChargeStatus.PAID)
-                .amountCents(3000)
-                .applicationFeeCents(300)
-                .currency("eur")
-                .paidAt(OffsetDateTime.now())
-                .stripePaymentIntentId("pi_top_up")
-                .payoutEligibleAt(ENDS_AT.plusDays(1))
-                .build();
-        paidCharges(bookingFee(), topUp);
-
-        apply(4, null);
-
-        verify(connect).refundPartially(eq("pi_top_up"), eq(3000), anyString());
-        verify(connect, never()).refundPartially(eq("pi_booking"), anyInt(), anyString());
-    }
-
-    @Test
-    void aFallingParty_spillsOntoTheNextChargeWhenOneIsNotEnough() {
-        Reservation reservation = reservation();
-        stored(reservation);
-        verdict(PartySizeChange.APPLY);
-        ReservationCharge topUp = ReservationCharge.builder()
-                .id(UUID.randomUUID())
-                .reservationId(reservationId)
-                .kind(ChargeKind.PARTY_SIZE_TOP_UP)
-                .status(ChargeStatus.PAID)
-                .amountCents(1500)
-                .applicationFeeCents(150)
-                .currency("eur")
-                .paidAt(OffsetDateTime.now())
-                .stripePaymentIntentId("pi_top_up")
-                .payoutEligibleAt(ENDS_AT.plusDays(1))
-                .build();
-        paidCharges(bookingFee(), topUp);
-
-        // Six to three: 45,00 € owed, of which the top-up only holds 15,00 €.
-        GuestModificationResponse result = apply(3, null);
-
-        assertThat(result.refundedAmountCents()).isEqualTo(4500);
-        verify(connect).refundPartially(eq("pi_top_up"), eq(1500), anyString());
-        verify(connect).refundPartially(eq("pi_booking"), eq(3000), anyString());
-    }
-
-    @Test
-    void aFallingParty_takesNothingBackFromANoShowPenalty() {
-        // A penalty answers an absence, not a cover. It is not the diner's to reclaim by
-        // shrinking a party, even when it is the most recent money on the reservation.
-        Reservation reservation = reservation();
-        stored(reservation);
-        verdict(PartySizeChange.APPLY);
-        ReservationCharge penalty = ReservationCharge.builder()
-                .id(UUID.randomUUID())
-                .reservationId(reservationId)
-                .kind(ChargeKind.NO_SHOW_PENALTY)
-                .status(ChargeStatus.PAID)
-                .amountCents(9000)
-                .currency("eur")
-                .paidAt(OffsetDateTime.now())
-                .stripePaymentIntentId("pi_penalty")
-                .build();
-        paidCharges(bookingFee(), penalty);
-
-        GuestModificationResponse result = apply(4, null);
-
-        assertThat(result.refundedAmountCents()).isEqualTo(3000);
-        verify(connect).refundPartially(eq("pi_booking"), eq(3000), anyString());
-        verify(connect, never()).refundPartially(eq("pi_penalty"), anyInt(), anyString());
-    }
-
-    @Test
-    void aFallingPartyOnAWaivedFee_movesNoMoneyAndSaysSo() {
-        // Staff waived the fee: the price per cover survives on the row, but nothing ever
-        // stood behind it. The rule follows the money, as it does when a party grows.
-        Reservation reservation = reservation();
-        reservation.setGuaranteeStatus(GuaranteeStatus.EXEMPTED);
-        stored(reservation);
-        verdict(PartySizeChange.APPLY);
-        paidCharges();
-
-        assertThat(apply(4, null).refundedAmountCents()).isZero();
-        verify(connect, never()).refundPartially(anyString(), anyInt(), anyString());
-    }
-
-    @Test
-    void aFallingPartyThatNeverPaid_isRepricedRatherThanRefunded() {
-        // The link was sent for six and has not been followed. Leaving the amount alone
-        // would ask them to pay for covers they have just given up.
-        Reservation reservation = reservation();
-        reservation.setGuaranteeStatus(GuaranteeStatus.AWAITING);
-        reservation.setStatus(ReservationStatus.AWAITING_PAYMENT);
-        stored(reservation);
-        verdict(PartySizeChange.APPLY);
-        paidCharges();
-
-        GuestModificationResponse result = apply(4, null);
-
-        assertThat(reservation.getGuaranteeAmountCents()).isEqualTo(6000);
-        assertThat(result.refundedAmountCents()).isZero();
-    }
-
-    @Test
-    void aFallingPartyOnAFreeReservation_movesNoMoney() {
-        Reservation reservation = reservation();
-        reservation.setGuaranteeMode(GuaranteeMode.NONE.code());
-        reservation.setGuaranteeStatus(GuaranteeStatus.NOT_REQUIRED);
-        reservation.setGuaranteeCentsPerGuest(null);
-        reservation.setGuaranteeAmountCents(null);
-        stored(reservation);
-        verdict(PartySizeChange.APPLY);
-        paidCharges();
-
-        assertThat(apply(4, null).refundedAmountCents()).isZero();
-        verify(connect, never()).refundPartially(anyString(), anyInt(), anyString());
-    }
+    // Ce qui revient au convive est teste dans PartySizeRefundTest : la regle
+    // appartient au composant partage, pas a ce service.
 
     // --- The party rising -----------------------------------------------------
 
@@ -443,13 +310,17 @@ class ReservationModificationServiceTest {
         stored(reservation);
         verdict(PartySizeChange.COLLECT_TOP_UP);
         when(topUps.open(reservation, 8)).thenReturn(ReservationCharge.builder()
-                .targetPartySize(8).amountCents(3000).currency("eur").build());
+                .targetPartySize(8).amountCents(3000).currency("eur")
+                .paymentToken("top-up-link").build());
 
         GuestModificationResponse result = apply(8, null);
 
         assertThat(reservation.getPartySize()).isEqualTo(6);
         assertThat(result.partySize()).isEqualTo(6);
         assertThat(result.pendingTopUp().targetPartySize()).isEqualTo(8);
+        // The charge's own link travels with it, so the diner can be walked to the page
+        // that settles it rather than told to wait for a message.
+        assertThat(result.topUpPaymentToken()).isEqualTo("top-up-link");
     }
 
     @Test
@@ -485,7 +356,7 @@ class ReservationModificationServiceTest {
         Reservation reservation = reservation();
         stored(reservation);
         verdict(PartySizeChange.APPLY_AND_LAPSE_TOP_UP);
-        paidCharges(bookingFee());
+        refundsOnAFall(3000);
 
         apply(4, null);
 
@@ -500,7 +371,7 @@ class ReservationModificationServiceTest {
         Reservation reservation = reservation();
         stored(reservation);
         verdict(PartySizeChange.APPLY);
-        paidCharges(bookingFee());
+        refundsOnAFall(3000);
 
         apply(4, null);
 

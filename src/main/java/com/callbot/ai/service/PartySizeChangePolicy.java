@@ -21,8 +21,9 @@ import lombok.RequiredArgsConstructor;
  * become eight for free, on a table that cannot seat them. Three cases go through one
  * door here.
  *
- * <p><strong>Down</strong> — applied straight away. No money moves: a partial refund
- * does not exist, so shrinking a party never gives anything back.
+ * <p><strong>Down</strong> — applied straight away, and the covers given up are handed
+ * back when a booking fee paid for them ({@link PartySizeRefund}). Not a cancellation:
+ * the diner is still coming, with fewer of them, so the refund window has no say.
  *
  * <p><strong>Up, mode {@code none} or {@code no_show}</strong> — a table check, then
  * applied straight away. Nothing is asked of the diner in {@code no_show}: the penalty
@@ -70,7 +71,8 @@ public class PartySizeChangePolicy {
             return PartySizeChange.APPLY;
         }
         if (newPartySize < current) {
-            // Down: nothing to check, and nothing to refund. But a request outstanding
+            // Down: no table to check — a smaller party fits wherever the larger one did.
+            // The refund is the caller's to make, not a verdict. But a request outstanding
             // was priced against the party that is about to change, so it goes with it.
             return topUpIsRunning(reservation)
                     ? PartySizeChange.APPLY_AND_LAPSE_TOP_UP

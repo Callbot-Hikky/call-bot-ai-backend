@@ -64,6 +64,7 @@ public class ReservationService {
     private final GuaranteePolicy guaranteePolicy;
     private final PartySizeChangePolicy partySizeChangePolicy;
     private final PartySizeTopUpService topUps;
+    private final PartySizeRefund partySizeRefund;
     private final ReservationChargeRepository charges;
 
     public ReservationResponse create(ReservationRequest request, String callerEmail) {
@@ -129,6 +130,15 @@ public class ReservationService {
         PartySizeChange verdict = partySizeChangePolicy.decide(
                 reservation, request.partySize(), request.startsAt(), request.endsAt());
         Integer requestedPartySize = request.partySize();
+        // A party that shrank gives its covers back, whoever pressed the button. A diner
+        // doing this from their own link and a staff member doing it for them over the
+        // telephone are the same event, and answering them differently would make the
+        // refund depend on which door the change came through.
+        if (verdict != PartySizeChange.COLLECT_TOP_UP && requestedPartySize != null
+                && reservation.getPartySize() != null) {
+            partySizeRefund.handBackCoversGivenUp(
+                    reservation, reservation.getPartySize(), requestedPartySize);
+        }
         reservation.setCustomerId(request.customerId());
         reservation.setTableId(request.tableId());
         reservation.setCallId(request.callId());

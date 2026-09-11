@@ -3,33 +3,22 @@ package com.callbot.ai.service;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.util.Comparator;
-import java.util.List;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.callbot.ai.dto.GuestModificationRequest;
 import com.callbot.ai.dto.GuestModificationResponse;
-import com.callbot.ai.dto.PendingTopUpResponse;
 import com.callbot.ai.dto.PublicModificationResponse;
 import com.callbot.ai.dto.RescheduleSlotsResponse;
 import com.callbot.ai.exception.InvalidRequestException;
 import com.callbot.ai.exception.ResourceNotFoundException;
-import com.callbot.ai.gateway.stripe.StripeConnectGateway;
-import com.callbot.ai.model.ChargeKind;
-import com.callbot.ai.model.ChargeStatus;
-import com.callbot.ai.model.GuaranteeStatus;
 import com.callbot.ai.model.Reservation;
-import com.callbot.ai.model.ReservationCharge;
 import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.model.RestaurantTable;
 import com.callbot.ai.notification.ReservationModifiedByGuestEvent;
-import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 
@@ -55,30 +44,41 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class ReservationModificationService {
 
-    private static final Logger log = LoggerFactory.getLogger(ReservationModificationService.class);
-
     private final ReservationRepository reservations;
     private final RestaurantRepository restaurants;
-    private final ReservationChargeRepository charges;
     private final ReservationService reservationService;
     private final PartySizeChangePolicy partySizeChangePolicy;
     private final PartySizeTopUpService topUps;
+    private final PartySizeRefund partySizeRefund;
     private final TableAvailability availability;
-    private final StripeConnectGateway connect;
     private final ApplicationEventPublisher events;
 
     /**
      * What the diner is shown behind their link.
      *
-     * <p>A closed link still describes the reservation, and says so with {@code open}
-     * rather than failing: someone who followed a link deserves a page telling them why
-     * nothing can be changed, not one implying the booking never existed.
+     * <p>Three answers, not two. A link whose window has closed still describes the
+     * booking and says so with {@code open} — someone who followed a link deserves a page
+     * telling them why nothing can be changed, and their table is still theirs to see.
+     *
+     * <p>A booking that is cancelled or already served is different: the link has outlived
+     * what it pointed at, and goes on being a URL in an old message. It still resolves,
+     * but it hands back nothing except who to call.
      */
     @Transactional(readOnly = true)
     public PublicModificationResponse describe(String modificationToken) {
         Reservation reservation = byModificationToken(modificationToken);
-        return PublicModificationResponse.of(reservation, restaurantOf(reservation),
+        Restaurant restaurant = restaurantOf(reservation);
+        if (hasOutlivedItsBooking(reservation)) {
+            return PublicModificationResponse.spent(reservation, restaurant);
+        }
+        return PublicModificationResponse.of(reservation, restaurant,
                 isOpen(reservation), closesAt(reservation));
+    }
+
+    /** Cancelled, or the service has been and gone. */
+    private boolean hasOutlivedItsBooking(Reservation reservation) {
+        return ReservationStatus.CANCELLED.equals(reservation.getStatus())
+                || reservation.getStartsAt().isBefore(OffsetDateTime.now());
     }
 
     /**
@@ -147,7 +147,8 @@ public class ReservationModificationService {
 
         int refunded = 0;
         if (effectivePartySize < previousPartySize) {
-            refunded = handBackTheCoversGivenUp(reservation, previousPartySize, effectivePartySize);
+            refunded = partySizeRefund.handBackCoversGivenUp(
+                    reservation, previousPartySize, effectivePartySize);
         }
         reservation.setPartySize(effectivePartySize);
         Reservation saved = reservations.save(reservation);
@@ -162,11 +163,12 @@ public class ReservationModificationService {
                     saved.getId(), previousPartySize, previousStartsAt, refunded));
         }
 
-        PendingTopUpResponse pendingTopUp = verdict == PartySizeChange.COLLECT_TOP_UP
-                ? PendingTopUpResponse.of(topUps.open(saved, wantedPartySize))
-                : null;
-        return new GuestModificationResponse(
-                saved.getStartsAt(), saved.getPartySize(), refunded, pendingTopUp);
+        if (verdict == PartySizeChange.COLLECT_TOP_UP) {
+            return GuestModificationResponse.owing(saved.getStartsAt(), saved.getPartySize(),
+                    topUps.open(saved, wantedPartySize));
+        }
+        return GuestModificationResponse.applied(
+                saved.getStartsAt(), saved.getPartySize(), refunded);
     }
 
     /**
@@ -189,90 +191,6 @@ public class ReservationModificationService {
     }
 
     /**
-     * Gives back what was paid for the covers the diner has just given up.
-     *
-     * <p>Priced off the amount frozen when the reservation was taken, never the
-     * restaurant's current setting — the same rule the top-up is priced by, for the same
-     * reason.
-     *
-     * <p>Drawn from the most recent payment first. The covers being removed are the ones
-     * most recently added, so a party that grew through a top-up and then fell hands that
-     * top-up back before it touches the original fee. A no-show penalty is never drawn on:
-     * it answers an absence, not a cover, and shrinking a party is not a way to reclaim it.
-     *
-     * <p>Nothing is handed back for money that has not arrived. A fee still awaiting
-     * payment is repriced instead: the diner would otherwise be asked to settle a link
-     * covering covers they no longer want.
-     *
-     * @return what actually went back, in cents
-     */
-    private int handBackTheCoversGivenUp(Reservation reservation, int from, int to) {
-        Integer perGuest = reservation.getGuaranteeCentsPerGuest();
-        if (perGuest == null || perGuest <= 0) {
-            return 0;
-        }
-        if (GuaranteeStatus.AWAITING.equals(reservation.getGuaranteeStatus())) {
-            reservation.setGuaranteeAmountCents(perGuest * to);
-            return 0;
-        }
-        if (!GuaranteeStatus.SECURED.equals(reservation.getGuaranteeStatus())) {
-            // Waived, already handed back, or never asked for: the price per cover
-            // survives on the row, but no money ever stood behind it. The rule follows
-            // the money, exactly as it does when a party grows.
-            return 0;
-        }
-
-        int owed = perGuest * (from - to);
-        OffsetDateTime now = OffsetDateTime.now();
-        int handedBack = 0;
-
-        for (ReservationCharge charge : refundable(reservation)) {
-            if (handedBack >= owed) {
-                break;
-            }
-            int left = charge.getAmountCents()
-                    - (charge.getRefundedAmountCents() == null ? 0 : charge.getRefundedAmountCents());
-            if (left <= 0) {
-                continue;
-            }
-            int take = Math.min(left, owed - handedBack);
-
-            // The register is written before Stripe is called. Both are in one
-            // transaction, so either order rolls back on failure — but this order makes
-            // the failure that rolls back the one where no money moved.
-            charge.refundPartially(now, take);
-            charges.save(charge);
-            // Keyed on the charge and its running total, so a retry after a lost answer
-            // cannot hand the same covers back twice.
-            connect.refundPartially(charge.getStripePaymentIntentId(), take,
-                    "covers-" + charge.getId() + "-" + charge.getRefundedAmountCents());
-            handedBack += take;
-        }
-
-        if (handedBack < owed) {
-            // The reservation says a fee was collected, yet the register holds less than
-            // the covers given up are worth — money already sent to the restaurateur's
-            // bank, most likely, which the payout delay is supposed to forbid before the
-            // service. Said out loud rather than swallowed: the difference is owed to a
-            // diner and somebody has to send it by hand.
-            log.error("Reservation {} owes {} cents back for covers given up, but only {} could be "
-                    + "found in the register to return",
-                    reservation.getId(), owed, handedBack);
-        }
-        return handedBack;
-    }
-
-    /** Settled money on this reservation that has not yet left for the restaurateur's bank. */
-    private List<ReservationCharge> refundable(Reservation reservation) {
-        return charges.findByReservationIdAndStatus(reservation.getId(), ChargeStatus.PAID).stream()
-                .filter(charge -> !ChargeKind.NO_SHOW_PENALTY.equals(charge.getKind()))
-                .filter(charge -> charge.getPaidOutAt() == null)
-                .sorted(Comparator.comparing(ReservationCharge::getPaidAt,
-                        Comparator.nullsFirst(Comparator.naturalOrder())).reversed())
-                .toList();
-    }
-
-    /**
      * When this reservation stops being the diner's to change.
      *
      * <p>The window frozen on the reservation is the one that counts, not the restaurant's
@@ -280,10 +198,15 @@ public class ReservationModificationService {
      * the reading the refund window already gives it.
      */
     private OffsetDateTime closesAt(Reservation reservation) {
+        return closesFor(reservation, reservation.getStartsAt());
+    }
+
+    /** When a service starting at {@code startsAt} stops being open to change. */
+    private OffsetDateTime closesFor(Reservation reservation, OffsetDateTime startsAt) {
         int windowHours = reservation.getModificationWindowHours() == null
                 ? 0
                 : reservation.getModificationWindowHours();
-        return reservation.getStartsAt().minusHours(windowHours);
+        return startsAt.minusHours(windowHours);
     }
 
     private boolean isOpen(Reservation reservation) {
@@ -309,10 +232,7 @@ public class ReservationModificationService {
      * restaurateur setting a window is refusing.
      */
     private void requireServiceFarEnoughOff(Reservation reservation, OffsetDateTime startsAt) {
-        int windowHours = reservation.getModificationWindowHours() == null
-                ? 0
-                : reservation.getModificationWindowHours();
-        if (!OffsetDateTime.now().isBefore(startsAt.minusHours(windowHours))) {
+        if (!OffsetDateTime.now().isBefore(closesFor(reservation, startsAt))) {
             throw new InvalidRequestException(
                     "Ce créneau est trop proche pour être réservé en ligne : appelez le restaurant");
         }

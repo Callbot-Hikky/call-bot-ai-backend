@@ -3,6 +3,7 @@ package com.callbot.ai.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -62,6 +63,8 @@ class ReservationServiceTest {
     private PartySizeChangePolicy partySizeChangePolicy;
     @Mock
     private PartySizeTopUpService topUps;
+    @Mock
+    private PartySizeRefund partySizeRefund;
     @Mock
     private ReservationChargeRepository charges;
     @InjectMocks
@@ -288,6 +291,37 @@ class ReservationServiceTest {
         verify(partySizeChangePolicy).decide(any(), eq(6),
                 eq(OffsetDateTime.parse("2030-01-01T19:00:00Z")),
                 eq(OffsetDateTime.parse("2030-01-01T21:00:00Z")));
+    }
+
+    @Test
+    void update_whenThePartyShrinks_handsBackTheCoversGivenUp() {
+        // The same event as a diner shrinking their own party from their link. Answering
+        // the two differently would make the refund depend on which door it came through.
+        UUID id = UUID.randomUUID();
+        when(reservationRepository.findById(id)).thenReturn(Optional.of(reservation(id)));
+        when(reservationRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(partySizeChangePolicy.decide(any(), any(), any(), any()))
+                .thenReturn(PartySizeChange.APPLY);
+
+        reservationService.update(id, raisedTo(1), false, OWNER);
+
+        verify(partySizeRefund).handBackCoversGivenUp(any(), eq(2), eq(1));
+    }
+
+    @Test
+    void update_whenARiseStillOwesMoney_handsNothingBack() {
+        // Nothing has changed yet, so there is nothing to give back.
+        UUID id = UUID.randomUUID();
+        when(reservationRepository.findById(id)).thenReturn(Optional.of(reservation(id)));
+        when(reservationRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(partySizeChangePolicy.decide(any(), any(), any(), any()))
+                .thenReturn(PartySizeChange.COLLECT_TOP_UP);
+        when(topUps.open(any(), eq(6))).thenReturn(ReservationCharge.builder()
+                .targetPartySize(6).amountCents(6000).currency("eur").build());
+
+        reservationService.update(id, raisedTo(6), false, OWNER);
+
+        verify(partySizeRefund, never()).handBackCoversGivenUp(any(), anyInt(), anyInt());
     }
 
     @Test
