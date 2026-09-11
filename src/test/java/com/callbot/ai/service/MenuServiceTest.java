@@ -153,6 +153,19 @@ class MenuServiceTest {
     }
 
     @Test
+    void upsert_manualWithoutSections_cannotBePublished() throws Exception {
+        restaurantExists();
+        when(menuRepository.findById(restaurantId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> menuService.upsert(restaurantId, new MenuRequest("manual",
+                objectMapper.readTree("""
+                        {"version":1,"sections":[]}"""))))
+                .isInstanceOf(MenuFileException.class)
+                .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT));
+        verify(menuRepository, never()).save(any());
+    }
+
+    @Test
     void upsert_withoutManual_keepsExistingHandTypedMenu() {
         restaurantExists();
         when(menuRepository.findById(restaurantId)).thenReturn(Optional.of(

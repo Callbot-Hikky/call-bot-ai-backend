@@ -238,7 +238,8 @@ public class MenuService {
                 fileRepository.countByRestaurantIdAndKind(restaurantId, RestaurantMenuFile.KIND_PDF) >= 1;
             case RestaurantMenu.MODE_IMAGES ->
                 fileRepository.countByRestaurantIdAndKind(restaurantId, RestaurantMenuFile.KIND_IMAGE) >= 1;
-            case RestaurantMenu.MODE_MANUAL -> !parse(manualContent).isEmpty();
+            // Une saisie n'est publiable qu'avec au moins une section : « {"sections":[]} » ne l'est pas.
+            case RestaurantMenu.MODE_MANUAL -> !parse(manualContent).path("sections").isEmpty();
             default -> true;
         };
         if (!ready) {
