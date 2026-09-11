@@ -17,6 +17,9 @@ public final class BookingPolicy {
     /** Fenetre de creneaux proposee au client, en jours glissants. */
     public static final int WINDOW_DAYS = 7;
 
+    /** Un client ne cumule pas plusieurs reservations actives le meme jour dans le meme restaurant. */
+    public static final int MAX_ACTIVE_PER_DAY = 1;
+
     private BookingPolicy() {
     }
 }
