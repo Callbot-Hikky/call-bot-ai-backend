@@ -3,6 +3,7 @@ package com.callbot.ai.service;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.LinkedHashSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -25,6 +26,11 @@ import com.callbot.ai.notification.ReservationCreatedEvent;
 import com.callbot.ai.repository.CustomerRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantRepository;
+import com.callbot.ai.util.PhoneNumbers;
+import com.callbot.ai.dto.PublicRescheduleRequest;
+import com.callbot.ai.notification.ReservationUpdatedEvent;
+import java.time.Duration;
+import java.util.List;
 
 import lombok.RequiredArgsConstructor;
 
@@ -93,7 +99,7 @@ public class PublicBookingService {
                 .restaurantId(restaurantId)
                 .customerId(customer.getId())
                 .tableId(slot.tableId())
-                .tableIds(Set.of(slot.tableId()))
+                .tableIds(new LinkedHashSet<>(Set.of(slot.tableId())))
                 .startsAt(slot.startsAt())
                 .endsAt(slot.endsAt())
                 .partySize(request.partySize())
@@ -108,6 +114,73 @@ public class PublicBookingService {
         }
         events.publishEvent(new ReservationCreatedEvent(reservation.getId()));
         return toResponse(reservation, restaurant, customer);
+    }
+
+    /** Creneaux pour deplacer sa reservation : la duree d'origine, la reservation exclue des tables occupees. */
+    @Transactional(readOnly = true)
+    public RescheduleSlotsResponse rescheduleSlots(UUID reservationId, Integer partySize) {
+        Reservation reservation = requireReschedulable(reservationId);
+        int size = partySize != null ? partySize : reservation.getPartySize();
+        requirePartySize(size);
+        return reservationService.rescheduleSlots(reservation.getId(), null, size);
+    }
+
+    /**
+     * Deplace la reservation depuis le lien du message de confirmation. Comme a la creation,
+     * seul un creneau propose est accepte : table et heure de fin viennent de lui. Le nom du
+     * client n'est pas modifiable ici, la route est anonyme.
+     */
+    public PublicReservationResponse reschedule(UUID reservationId, PublicRescheduleRequest request) {
+        Reservation reservation = requireReschedulable(reservationId);
+        Restaurant restaurant = requireRestaurant(reservation.getRestaurantId());
+        requirePartySize(request.partySize());
+        ZoneId zone = ZoneId.of(restaurant.getTimezone());
+        OffsetDateTime now = OffsetDateTime.now(zone);
+        LocalDate day = request.startsAt().atZoneSameInstant(zone).toLocalDate();
+        LocalDate today = now.toLocalDate();
+        if (request.startsAt().isBefore(now) || day.isAfter(lastBookableDay(today))) {
+            throw new BookingException(HttpStatus.BAD_REQUEST, "slot_out_of_window",
+                    "The slot must be in the next " + BookingPolicy.WINDOW_DAYS + " days");
+        }
+        Duration duration = Duration.between(reservation.getStartsAt(), reservation.getEndsAt());
+        RescheduleSlotsResponse.Slot slot = reservationService
+                .slotsFor(restaurant, day, 1, request.partySize(), duration, reservation.getId())
+                .days().stream()
+                .flatMap(d -> d.slots().stream())
+                .filter(s -> s.startsAt().isEqual(request.startsAt()))
+                .findFirst()
+                .orElseThrow(() -> new BookingException(HttpStatus.CONFLICT, "no_table",
+                        "No table is available for that slot"));
+        reservation.setStartsAt(slot.startsAt());
+        reservation.setEndsAt(slot.endsAt());
+        reservation.setTableId(slot.tableId());
+        // Collection modifiable : Hibernate la gere, un Set immuable leverait UnsupportedOperationException.
+        reservation.setTableIds(new LinkedHashSet<>(Set.of(slot.tableId())));
+        reservation.setPartySize(request.partySize());
+        if (request.notes() != null) {
+            reservation.setNotes(blankToNull(request.notes()));
+        }
+        Reservation saved;
+        try {
+            saved = reservationRepository.saveAndFlush(reservation);
+        } catch (DataIntegrityViolationException e) {
+            throw new BookingException(HttpStatus.CONFLICT, "no_table", "No table is available for that slot");
+        }
+        events.publishEvent(new ReservationUpdatedEvent(saved.getId()));
+        Customer customer = saved.getCustomerId() == null ? null
+                : customerRepository.findById(saved.getCustomerId()).orElse(null);
+        return toResponse(saved, restaurant, customer);
+    }
+
+    /** Une reservation annulee ou deja passee ne se deplace plus. */
+    private Reservation requireReschedulable(UUID reservationId) {
+        Reservation reservation = reservationRepository.findById(reservationId)
+                .orElseThrow(() -> new ResourceNotFoundException("Reservation", reservationId));
+        if (!List.of("pending", "confirmed").contains(reservation.getStatus())) {
+            throw new BookingException(HttpStatus.CONFLICT, "not_reschedulable",
+                    "This reservation can no longer be moved");
+        }
+        return reservation;
     }
 
     @Transactional(readOnly = true)
@@ -127,7 +200,7 @@ public class PublicBookingService {
      * une fiche neuve ou vide.
      */
     private Customer upsertCustomer(UUID restaurantId, PublicReservationRequest.Customer input) {
-        String phone = normalizePhone(input.phone());
+        String phone = PhoneNumbers.normalize(input.phone());
         Customer customer = customerRepository.findByRestaurantIdAndPhone(restaurantId, phone)
                 .orElseGet(() -> Customer.builder().restaurantId(restaurantId).phone(phone).build());
         if (customer.getFirstName() == null || customer.getFirstName().isBlank()) {
@@ -152,11 +225,6 @@ public class PublicBookingService {
 
     private static LocalDate lastBookableDay(LocalDate today) {
         return today.plusDays(BookingPolicy.WINDOW_DAYS - 1L);
-    }
-
-    /** « 06 12 34 56 78 », « 06.12.34.56.78 » et « 0612345678 » designent le meme client. */
-    static String normalizePhone(String raw) {
-        return raw.replaceAll("[\\s.()-]", "");
     }
 
     private void requirePartySize(int partySize) {

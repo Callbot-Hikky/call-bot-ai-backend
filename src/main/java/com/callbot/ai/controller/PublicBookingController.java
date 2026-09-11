@@ -8,6 +8,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.callbot.ai.dto.PublicReservationRequest;
 import com.callbot.ai.dto.PublicReservationResponse;
+import com.callbot.ai.dto.PublicRescheduleRequest;
 import com.callbot.ai.dto.RescheduleSlotsResponse;
 import com.callbot.ai.service.PublicBookingService;
 
@@ -51,5 +53,17 @@ public class PublicBookingController {
     @GetMapping("/reservations/{id}")
     public PublicReservationResponse get(@PathVariable UUID id) {
         return bookingService.get(id);
+    }
+
+    @GetMapping("/reservations/{id}/slots")
+    public RescheduleSlotsResponse rescheduleSlots(@PathVariable UUID id,
+            @RequestParam(required = false) Integer partySize) {
+        return bookingService.rescheduleSlots(id, partySize);
+    }
+
+    @PutMapping("/reservations/{id}")
+    public PublicReservationResponse reschedule(@PathVariable UUID id,
+            @Valid @RequestBody PublicRescheduleRequest request) {
+        return bookingService.reschedule(id, request);
     }
 }

@@ -85,8 +85,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/offers/webhook").permitAll()
                         // Reservation en ligne : trois routes publiques nommees, jamais de joker /api/public/**.
                         .requestMatchers(HttpMethod.GET, "/api/public/restaurants/*/slots",
-                                "/api/public/reservations/*").permitAll()
+                                "/api/public/reservations/*", "/api/public/reservations/*/slots").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/public/restaurants/*/reservations").permitAll()
+                        .requestMatchers(HttpMethod.PUT, "/api/public/reservations/*").permitAll()
                         // Call endpoints reserved for the AI microservice (API key).
                         .requestMatchers(HttpMethod.POST, "/api/calls/ingest").hasRole("SERVICE")
                         .requestMatchers(HttpMethod.GET, "/api/calls/context", "/api/calls/availability")
