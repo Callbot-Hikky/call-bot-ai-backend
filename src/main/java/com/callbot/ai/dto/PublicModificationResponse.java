@@ -39,4 +39,18 @@ public record PublicModificationResponse(
                 open,
                 closesAt);
     }
+
+    /**
+     * What a spent link shows: the restaurant, and nothing else.
+     *
+     * <p>For a reservation that is cancelled or whose service has passed. The link still
+     * resolves — saying so is kinder than a blank error, and the diner does hold the
+     * token — but a link that has outlived its booking has no business still handing out
+     * the hour, the party and the money. The restaurant's name stays so the page can tell
+     * them who to call.
+     */
+    public static PublicModificationResponse spent(Reservation reservation, Restaurant restaurant) {
+        return new PublicModificationResponse(restaurant.getName(), null, null, null, null,
+                reservation.getStatus(), null, null, false, null);
+    }
 }

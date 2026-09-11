@@ -189,19 +189,24 @@ public class ReservationCharge {
         if (refundCents <= 0) {
             throw new IllegalArgumentException("A refund of " + refundCents + " cents is not a refund");
         }
-        int amount = amountCents == null ? 0 : amountCents;
-        int already = refundedAmountCents == null ? 0 : refundedAmountCents;
-        if (already + refundCents > amount) {
+        int left = refundableCents();
+        if (refundCents > left) {
             throw new IllegalArgumentException("Refunding " + refundCents
-                    + " cents would exceed the " + (amount - already) + " left on this charge");
+                    + " cents would exceed the " + left + " left on this charge");
         }
 
         this.refundedAt = now;
-        this.refundedAmountCents = already + refundCents;
-        if (this.refundedAmountCents == amount) {
+        this.refundedAmountCents = (refundedAmountCents == null ? 0 : refundedAmountCents) + refundCents;
+        if (this.refundableCents() == 0) {
             this.status = ChargeStatus.REFUNDED;
             this.payoutEligibleAt = null;
         }
+    }
+
+    /** What is still available to hand back on this charge. */
+    public int refundableCents() {
+        return Math.max(0, (amountCents == null ? 0 : amountCents)
+                - (refundedAmountCents == null ? 0 : refundedAmountCents));
     }
 
     public boolean isPending() {

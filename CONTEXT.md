@@ -100,6 +100,14 @@ exact du complément de couverts.
 Rien à voir avec une annulation : le client vient toujours, avec moins de monde. La
 fenêtre de remboursement ne s'y applique donc pas.
 
+Vaut quelle que soit la porte par laquelle la baisse arrive — le client depuis son lien,
+ou le personnel au téléphone pour lui. Faire dépendre le remboursement de qui appuie sur
+le bouton n'aurait aucun sens pour le client.
+
+Ne concerne que le mode `booking_fee`. Sous garantie `no_show`, la carte est enregistrée
+et jamais débitée : le montant par couvert y est la **pénalité**, et le lire comme une
+somme due reviendrait à promettre le remboursement de quelque chose qui n'est jamais entré.
+
 Prélevé sur l'encaissement le plus récent d'abord : les couverts retirés sont ceux qui ont
 été ajoutés en dernier, et c'est donc le complément qui les avait achetés qui cède avant
 les frais d'origine. Une **pénalité no-show** n'est jamais entamée — elle répond à une

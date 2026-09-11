@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -119,6 +120,23 @@ class GuestModificationIntegrationTest extends AbstractIntegrationTest {
     void anUnknownLinkRevealsNothing() throws Exception {
         mockMvc.perform(get("/api/public/reservations/modifier/" + UUID.randomUUID()))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void aLinkThatOutlivedItsBookingHandsBackNothingButWhoToCall() throws Exception {
+        freeMode();
+        String reservationId = reservationFor(2);
+        String link = modificationToken(reservationId);
+        mockMvc.perform(delete("/api/reservations/" + reservationId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/api/public/reservations/modifier/" + link))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.restaurantName").value("Chez Modif"))
+                .andExpect(jsonPath("$.open").value(false))
+                .andExpect(jsonPath("$.startsAt").doesNotExist())
+                .andExpect(jsonPath("$.partySize").doesNotExist());
     }
 
     @Test
@@ -278,7 +296,10 @@ class GuestModificationIntegrationTest extends AbstractIntegrationTest {
                 // Nothing is held: the party stays as sold until the money is in.
                 .andExpect(jsonPath("$.partySize").value(2))
                 .andExpect(jsonPath("$.pendingTopUp.targetPartySize").value(5))
-                .andExpect(jsonPath("$.pendingTopUp.amountCents").value(4500));
+                .andExpect(jsonPath("$.pendingTopUp.amountCents").value(4500))
+                // The link that settles it, so the diner is walked there rather than told
+                // to wait for a message.
+                .andExpect(jsonPath("$.topUpPaymentToken").isNotEmpty());
 
         assertThat(reservation(reservationId).getPartySize()).isEqualTo(2);
     }

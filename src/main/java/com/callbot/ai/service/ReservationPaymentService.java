@@ -412,9 +412,13 @@ public class ReservationPaymentService {
     }
 
     /**
-     * A booking fee comes back in full, or not at all — never a share of it. Cancelling
-     * late is exactly what the fee exists to discourage, and a partial refund would
-     * blunt that while inviting an argument over the fraction.
+     * Whether <em>cancelling</em> gives the fee back. All of it, or none — never a share.
+     * Cancelling late is exactly what the fee exists to discourage, and handing part of it
+     * back would blunt that while inviting an argument over the fraction.
+     *
+     * <p>This governs cancellation only. A party that merely shrinks is not cancelling:
+     * it does give its covers back, whatever the refund window says, through
+     * {@link PartySizeRefund}.
      */
     private boolean isRefundable(Reservation reservation) {
         if (!GuaranteeStatus.SECURED.equals(reservation.getGuaranteeStatus())) {
