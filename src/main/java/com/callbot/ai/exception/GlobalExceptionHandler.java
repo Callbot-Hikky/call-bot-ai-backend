@@ -66,6 +66,19 @@ public class GlobalExceptionHandler {
                         "File exceeds the maximum upload size"));
     }
 
+    /** A webhook that fails signature verification is a bad request, not a server error. */
+    @ExceptionHandler(InvalidPaymentSignatureException.class)
+    public ResponseEntity<ApiError> handleInvalidPaymentSignature(InvalidPaymentSignatureException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiError.of(HttpStatus.BAD_REQUEST.value(), "Bad Request", ex.getMessage()));
+    }
+
+    @ExceptionHandler(PaymentGatewayException.class)
+    public ResponseEntity<ApiError> handlePaymentGateway(PaymentGatewayException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(ApiError.of(HttpStatus.BAD_GATEWAY.value(), "Bad Gateway", ex.getMessage()));
+    }
+
     /**
      * Covers unique-key violations and the reservations EXCLUDE constraint
      * (a table double-booked on overlapping time ranges). The constraint name
