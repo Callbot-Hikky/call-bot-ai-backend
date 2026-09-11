@@ -3,6 +3,7 @@ package com.callbot.ai.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -23,6 +24,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 
 import com.callbot.ai.dto.PublicReservationRequest;
@@ -80,15 +82,15 @@ class PublicBookingServiceTest {
     void create_onProposedSlot_savesWebReservationAndNotifies() {
         OffsetDateTime startsAt = tomorrowEvening();
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
-        when(reservationService.slotsFor(eq(restaurant), any(), eq(2), eq(BookingPolicy.DEFAULT_DURATION), eq(null)))
-                .thenReturn(slotsWith(startsAt));
+        when(reservationService.slotsFor(eq(restaurant), eq(startsAt.toLocalDate()), eq(1), eq(2),
+                eq(BookingPolicy.DEFAULT_DURATION), eq(null))).thenReturn(slotsWith(startsAt));
         when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "0612345678")).thenReturn(Optional.empty());
         when(customerRepository.save(any())).thenAnswer(i -> {
             Customer c = i.getArgument(0);
             c.setId(UUID.randomUUID());
             return c;
         });
-        when(reservationRepository.save(any())).thenAnswer(i -> {
+        when(reservationRepository.saveAndFlush(any())).thenAnswer(i -> {
             Reservation r = i.getArgument(0);
             r.setId(UUID.randomUUID());
             return r;
@@ -97,7 +99,7 @@ class PublicBookingServiceTest {
         PublicReservationResponse response = service.create(restaurantId, request(startsAt, 2));
 
         ArgumentCaptor<Reservation> saved = ArgumentCaptor.forClass(Reservation.class);
-        verify(reservationRepository).save(saved.capture());
+        verify(reservationRepository).saveAndFlush(saved.capture());
         assertThat(saved.getValue().getSource()).isEqualTo("web");
         assertThat(saved.getValue().getStatus()).isEqualTo("pending");
         assertThat(saved.getValue().getTableId()).isEqualTo(tableId);
@@ -110,29 +112,30 @@ class PublicBookingServiceTest {
     }
 
     @Test
-    void create_reusesTheCustomerFoundByNormalizedPhone() {
+    void create_reusesTheCustomerFoundByNormalizedPhone_withoutRewritingIt() {
         OffsetDateTime startsAt = tomorrowEvening();
         Customer existing = Customer.builder().id(UUID.randomUUID()).restaurantId(restaurantId)
                 .phone("0612345678").firstName("N.").build();
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
-        when(reservationService.slotsFor(any(), any(), eq(2), any(), any())).thenReturn(slotsWith(startsAt));
+        when(reservationService.slotsFor(any(), any(), anyInt(), eq(2), any(), any())).thenReturn(slotsWith(startsAt));
         when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "0612345678")).thenReturn(Optional.of(existing));
         when(customerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(reservationRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(reservationRepository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
 
         service.create(restaurantId, request(startsAt, 2));
 
         ArgumentCaptor<Customer> saved = ArgumentCaptor.forClass(Customer.class);
         verify(customerRepository).save(saved.capture());
         assertThat(saved.getValue().getId()).isEqualTo(existing.getId());
-        assertThat(saved.getValue().getFirstName()).isEqualTo("Nadia");
+        // Route anonyme : connaitre un numero ne permet pas de renommer son proprietaire.
+        assertThat(saved.getValue().getFirstName()).isEqualTo("N.");
     }
 
     @Test
     void create_offTheProposedSlots_isRejectedWith409NoTable() {
         OffsetDateTime startsAt = tomorrowEvening();
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
-        when(reservationService.slotsFor(any(), any(), eq(2), any(), any()))
+        when(reservationService.slotsFor(any(), any(), anyInt(), eq(2), any(), any()))
                 .thenReturn(slotsWith(startsAt.plusHours(1)));
 
         assertThatThrownBy(() -> service.create(restaurantId, request(startsAt, 2)))
@@ -141,7 +144,7 @@ class PublicBookingServiceTest {
                     assertThat(((BookingException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT);
                     assertThat(((BookingException) e).getCode()).isEqualTo("no_table");
                 });
-        verify(reservationRepository, never()).save(any());
+        verify(reservationRepository, never()).saveAndFlush(any());
         verify(events, never()).publishEvent(any());
     }
 
@@ -152,7 +155,7 @@ class PublicBookingServiceTest {
         assertThatThrownBy(() -> service.create(restaurantId, request(OffsetDateTime.now().minusDays(1), 2)))
                 .isInstanceOf(BookingException.class)
                 .satisfies(e -> assertThat(((BookingException) e).getCode()).isEqualTo("slot_out_of_window"));
-        verify(reservationService, never()).slotsFor(any(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any());
+        verify(reservationService, never()).slotsFor(any(), any(), anyInt(), anyInt(), any(), any());
     }
 
     @Test
@@ -162,6 +165,69 @@ class PublicBookingServiceTest {
         assertThatThrownBy(() -> service.create(restaurantId, request(tomorrowEvening().plusDays(8), 2)))
                 .isInstanceOf(BookingException.class)
                 .satisfies(e -> assertThat(((BookingException) e).getCode()).isEqualTo("slot_out_of_window"));
+    }
+
+    @Test
+    void create_onTheSeventhDay_isAccepted_andOnTheEighth_isRejected() {
+        ZoneId zone = ZoneId.of("Europe/Paris");
+        OffsetDateTime lastDay = LocalDate.now(zone).plusDays(6).atTime(19, 30).atZone(zone).toOffsetDateTime();
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
+        when(reservationService.slotsFor(any(), eq(lastDay.toLocalDate()), eq(1), eq(2), any(), any()))
+                .thenReturn(slotsWith(lastDay));
+        when(customerRepository.findByRestaurantIdAndPhone(any(), any())).thenReturn(Optional.empty());
+        when(customerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(reservationRepository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.create(restaurantId, request(lastDay, 2));
+        verify(reservationRepository).saveAndFlush(any());
+
+        assertThatThrownBy(() -> service.create(restaurantId, request(lastDay.plusDays(1), 2)))
+                .isInstanceOf(BookingException.class)
+                .satisfies(e -> assertThat(((BookingException) e).getCode()).isEqualTo("slot_out_of_window"));
+    }
+
+    @Test
+    void create_whenThePhoneAlreadyHasAReservationThatDay_isRejectedWith409() {
+        OffsetDateTime startsAt = tomorrowEvening();
+        Customer existing = Customer.builder().id(UUID.randomUUID()).restaurantId(restaurantId)
+                .phone("0612345678").firstName("Nadia").build();
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
+        when(reservationService.slotsFor(any(), any(), anyInt(), eq(2), any(), any())).thenReturn(slotsWith(startsAt));
+        when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "0612345678")).thenReturn(Optional.of(existing));
+        when(customerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(reservationRepository.countActiveByCustomerBetween(eq(restaurantId), eq(existing.getId()), any(), any()))
+                .thenReturn(1L);
+
+        assertThatThrownBy(() -> service.create(restaurantId, request(startsAt, 2)))
+                .isInstanceOf(BookingException.class)
+                .satisfies(e -> assertThat(((BookingException) e).getCode()).isEqualTo("already_booked"));
+        verify(reservationRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void create_whenTheDatabaseRefusesTheOverlap_answersNoTable() {
+        OffsetDateTime startsAt = tomorrowEvening();
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
+        when(reservationService.slotsFor(any(), any(), anyInt(), eq(2), any(), any())).thenReturn(slotsWith(startsAt));
+        when(customerRepository.findByRestaurantIdAndPhone(any(), any())).thenReturn(Optional.empty());
+        when(customerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(reservationRepository.saveAndFlush(any())).thenThrow(new DataIntegrityViolationException("no_overlapping_reservation"));
+
+        assertThatThrownBy(() -> service.create(restaurantId, request(startsAt, 2)))
+                .isInstanceOf(BookingException.class)
+                .satisfies(e -> assertThat(((BookingException) e).getCode()).isEqualTo("no_table"));
+        verify(events, never()).publishEvent(any());
+    }
+
+    @Test
+    void slots_outsideTheSevenDayWindow_isRejectedWith400() {
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
+
+        assertThatThrownBy(() -> service.slots(restaurantId, LocalDate.now().plusDays(10), 2))
+                .isInstanceOf(BookingException.class)
+                .satisfies(e -> assertThat(((BookingException) e).getCode()).isEqualTo("date_out_of_window"));
+        assertThatThrownBy(() -> service.slots(restaurantId, LocalDate.now().minusDays(1), 2))
+                .isInstanceOf(BookingException.class);
     }
 
     @Test
@@ -178,7 +244,7 @@ class PublicBookingServiceTest {
     @Test
     void slots_delegateToTheSharedAlgorithmWithDefaultDurationAndNoExclusion() {
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
-        LocalDate from = LocalDate.of(2030, 1, 1);
+        LocalDate from = LocalDate.now(ZoneId.of("Europe/Paris")).plusDays(2);
         RescheduleSlotsResponse expected = new RescheduleSlotsResponse(List.of());
         when(reservationService.slotsFor(restaurant, from, 4, BookingPolicy.DEFAULT_DURATION, null)).thenReturn(expected);
 
