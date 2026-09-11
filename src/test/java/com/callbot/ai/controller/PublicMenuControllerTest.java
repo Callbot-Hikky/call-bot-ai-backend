@@ -80,7 +80,7 @@ class PublicMenuControllerTest {
                 .andExpect(header().string("Content-Type", "application/pdf"))
                 .andExpect(header().string("Content-Disposition", "inline"))
                 .andExpect(header().string("X-Content-Type-Options", "nosniff"))
-                .andExpect(header().string("Cache-Control", "max-age=3600, public"))
+                .andExpect(header().string("Cache-Control", "no-cache"))
                 .andExpect(header().string("ETag", "\"" + fileId + "\""))
                 .andExpect(content().bytes(data));
     }

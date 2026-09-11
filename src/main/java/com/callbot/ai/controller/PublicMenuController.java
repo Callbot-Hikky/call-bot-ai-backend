@@ -1,7 +1,6 @@
 package com.callbot.ai.controller;
 
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
@@ -34,6 +33,8 @@ public class PublicMenuController {
     @GetMapping("/files/{fileId}")
     public ResponseEntity<byte[]> file(@PathVariable UUID restaurantId, @PathVariable UUID fileId) {
         return MenuFileHttp.inline(menuService.getPublicFile(restaurantId, fileId),
-                CacheControl.maxAge(1, TimeUnit.HOURS).cachePublic());
+                // Pas de cache sans revalidation : depublier doit rendre le fichier
+                // inaccessible tout de suite, l'ETag suffit pour repondre 304.
+                CacheControl.noCache());
     }
 }
