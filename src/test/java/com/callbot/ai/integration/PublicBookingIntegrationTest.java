@@ -3,9 +3,12 @@ package com.callbot.ai.integration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -66,8 +69,31 @@ class PublicBookingIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("no_table"));
 
+        // Deplacer sa reservation depuis le lien du message, sans session : creneaux excluant la
+        // sienne, puis PUT sur un creneau propose.
+        String moveSlots = mockMvc.perform(get("/api/public/reservations/" + reservationId + "/slots?partySize=2"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        // Loin du creneau d'origine : celui-ci redevient libre une fois la reservation deplacee.
+        String newStart = JsonPath.read(moveSlots, "$.days[1].slots[12].startsAt");
+        String moved = mockMvc.perform(put("/api/public/reservations/" + reservationId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"startsAt":"%s","partySize":2,"notes":"Terrasse svp"}""".formatted(newStart)))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        // Meme instant, quel que soit le decalage d'ecriture (+02:00 cote creneaux, Z cote base).
+        assertThat(OffsetDateTime.parse(JsonPath.read(moved, "$.startsAt")))
+                .isEqualTo(OffsetDateTime.parse(newStart));
+        String readBack = mockMvc.perform(get("/api/public/reservations/" + reservationId))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(OffsetDateTime.parse(JsonPath.read(readBack, "$.startsAt")))
+                .isEqualTo(OffsetDateTime.parse(newStart));
+
         // Le meme numero, un autre creneau le meme jour : refuse, le carnet ne se remplit pas d'un seul telephone.
-        String otherSlot = JsonPath.read(slots, "$.days[1].slots[3].startsAt");
+        // Un creneau qui ne chevauche pas la reservation deplacee : c'est bien le numero qui est refuse.
+        String otherSlot = JsonPath.read(slots, "$.days[1].slots[2].startsAt");
         mockMvc.perform(post("/api/public/restaurants/" + restaurantId + "/reservations")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -76,10 +102,13 @@ class PublicBookingIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("already_booked"));
 
-        // Le creneau pris n'est plus propose.
+        // Le creneau d'origine est de nouveau propose, le nouveau ne l'est plus.
         String after = mockMvc.perform(get("/api/public/restaurants/" + restaurantId + "/slots?partySize=2"))
                 .andReturn().getResponse().getContentAsString();
-        assertThat(after).doesNotContain(startsAt);
+        List<String> proposed = JsonPath.read(after, "$.days[*].slots[*].startsAt");
+        List<OffsetDateTime> instants = proposed.stream().map(OffsetDateTime::parse).toList();
+        assertThat(instants).noneMatch(t -> t.isEqual(OffsetDateTime.parse(newStart)));
+        assertThat(instants).anyMatch(t -> t.isEqual(OffsetDateTime.parse(startsAt)));
     }
 
     @Test

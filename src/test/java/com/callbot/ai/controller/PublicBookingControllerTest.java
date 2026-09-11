@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -101,6 +102,29 @@ class PublicBookingControllerTest {
                          "customer":{"firstName":"Nadia","phone":"0612345678"}}"""))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("no_table"));
+    }
+
+    @Test
+    void reschedule_withValidPayload_returnsTheUpdatedPublicView() throws Exception {
+        PublicReservationResponse r = sample();
+        when(bookingService.reschedule(eq(r.id()), any())).thenReturn(r);
+
+        mockMvc.perform(put("/api/public/reservations/" + r.id())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"startsAt":"2030-01-01T19:30:00Z","partySize":2,"notes":""}"""))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.restaurantName").value("Chez Test"));
+    }
+
+    @Test
+    void rescheduleSlots_passThePartySize() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(bookingService.rescheduleSlots(id, 4)).thenReturn(new RescheduleSlotsResponse(List.of()));
+
+        mockMvc.perform(get("/api/public/reservations/" + id + "/slots?partySize=4"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.days").isArray());
     }
 
     @Test
