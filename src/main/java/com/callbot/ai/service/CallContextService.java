@@ -8,6 +8,7 @@ import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -39,6 +40,13 @@ public class CallContextService {
     private static final int MAX_ALTERNATIVES = 3;
     private static final int MAX_PROBES = 8;
 
+    /**
+     * Plafond métier : au-delà, l'assistant vocal ne prend pas la réservation
+     * (un très grand groupe relève d'un échange humain). En-deçà, un groupe qui
+     * ne tient pas sur une seule table est réparti sur plusieurs tables libres.
+     */
+    private static final int MAX_PARTY_SIZE = 15;
+
     private final RestaurantRepository restaurantRepository;
     private final RestaurantHoursRepository hoursRepository;
     private final RestaurantTableRepository tableRepository;
@@ -56,11 +64,14 @@ public class CallContextService {
                         h.getOpensAt(), h.getClosesAt(), h.getIsClosed()))
                 .toList();
 
-        // Caps what the AI may accept without a human check.
-        Integer maxPartySize = tables.stream()
-                .map(RestaurantTable::getCapacity)
-                .max(Integer::compareTo)
-                .orElse(null);
+        // Plafond de groupe annoncé au bot : le maximum métier (15), borné par
+        // la capacité totale du restaurant (inutile d'accepter 15 si les tables
+        // ne totalisent que 10 places). Les tables peuvent être combinées, donc
+        // on ne se limite plus à la plus grande table isolée.
+        int totalCapacity = tables.stream()
+                .mapToInt(RestaurantTable::getCapacity)
+                .sum();
+        Integer maxPartySize = tables.isEmpty() ? null : Math.min(MAX_PARTY_SIZE, totalCapacity);
 
         return new CallContextResponse(
                 new CallContextResponse.Restaurant(restaurant.getId(), restaurant.getName(),
@@ -77,29 +88,31 @@ public class CallContextService {
         OffsetDateTime end = endsAt != null ? endsAt : startsAt.plus(DEFAULT_DURATION);
         Duration duration = Duration.between(startsAt, end);
 
+        // Plafond métier : au-delà de 15, l'assistant ne prend pas la réservation.
+        if (partySize > MAX_PARTY_SIZE) {
+            return new AvailabilityResponse(false, "party_too_large", null, List.of(),
+                    startsAt, end, partySize, List.of());
+        }
+
         List<RestaurantHours> hours = hoursRepository.findByRestaurantId(restaurant.getId());
-        List<RestaurantTable> candidates = activeTables(restaurant.getId()).stream()
-                .filter(t -> t.getCapacity() >= partySize)
-                // Smallest suitable table first, to keep large tables free for large parties.
-                .sorted(Comparator.comparing(RestaurantTable::getCapacity))
-                .toList();
 
         if (!isOpen(restaurant, hours, startsAt)) {
-            return new AvailabilityResponse(false, "closed", null, startsAt, end, partySize,
-                    alternatives(restaurant, hours, candidates, startsAt, duration));
+            return new AvailabilityResponse(false, "closed", null, List.of(), startsAt, end, partySize,
+                    alternatives(restaurant, hours, startsAt, duration, partySize));
         }
 
-        RestaurantTable free = firstFreeTable(restaurant.getId(), candidates, startsAt, end);
-        if (free == null) {
-            return new AvailabilityResponse(false, "no_table", null, startsAt, end, partySize,
-                    alternatives(restaurant, hours, candidates, startsAt, duration));
+        List<RestaurantTable> chosen = freeTablesFor(restaurant.getId(), partySize, startsAt, end);
+        if (chosen.isEmpty()) {
+            return new AvailabilityResponse(false, "no_table", null, List.of(), startsAt, end, partySize,
+                    alternatives(restaurant, hours, startsAt, duration, partySize));
         }
-        return new AvailabilityResponse(true, null, free.getId(), startsAt, end, partySize, List.of());
+        List<UUID> ids = chosen.stream().map(RestaurantTable::getId).toList();
+        return new AvailabilityResponse(true, null, ids.get(0), ids, startsAt, end, partySize, List.of());
     }
 
     /** Probes later slots so the AI can counter-propose instead of just refusing. */
     private List<AvailabilityResponse.Slot> alternatives(Restaurant restaurant, List<RestaurantHours> hours,
-            List<RestaurantTable> candidates, OffsetDateTime startsAt, Duration duration) {
+            OffsetDateTime startsAt, Duration duration, int partySize) {
         List<AvailabilityResponse.Slot> slots = new ArrayList<>();
         OffsetDateTime probe = startsAt;
         for (int i = 0; i < MAX_PROBES && slots.size() < MAX_ALTERNATIVES; i++) {
@@ -108,24 +121,55 @@ public class CallContextService {
             if (!isOpen(restaurant, hours, probe)) {
                 continue;
             }
-            RestaurantTable free = firstFreeTable(restaurant.getId(), candidates, probe, probeEnd);
-            if (free != null) {
-                slots.add(new AvailabilityResponse.Slot(probe, probeEnd, free.getId(), free.getCapacity()));
+            List<RestaurantTable> chosen = freeTablesFor(restaurant.getId(), partySize, probe, probeEnd);
+            if (!chosen.isEmpty()) {
+                int capacity = chosen.stream().mapToInt(RestaurantTable::getCapacity).sum();
+                slots.add(new AvailabilityResponse.Slot(probe, probeEnd, chosen.get(0).getId(), capacity));
             }
         }
         return slots;
     }
 
-    private RestaurantTable firstFreeTable(UUID restaurantId, List<RestaurantTable> candidates,
+    /**
+     * Tables libres à retenir pour asseoir {@code partySize} sur la plage donnée :
+     * une seule table si l'une suffit, sinon une combinaison de plusieurs tables
+     * libres. Liste vide si le groupe ne peut être assis, même en combinant.
+     */
+    private List<RestaurantTable> freeTablesFor(UUID restaurantId, int partySize,
             OffsetDateTime startsAt, OffsetDateTime endsAt) {
-        if (candidates.isEmpty()) {
-            return null;
-        }
         Set<UUID> busy = Set.copyOf(reservationRepository.findBusyTableIds(restaurantId, startsAt, endsAt));
-        return candidates.stream()
+        List<RestaurantTable> free = activeTables(restaurantId).stream()
                 .filter(t -> !busy.contains(t.getId()))
-                .findFirst()
-                .orElse(null);
+                .toList();
+        return pickTables(free, partySize);
+    }
+
+    /** Sélectionne les tables : une seule suffisante (la plus petite), sinon combinaison. */
+    private List<RestaurantTable> pickTables(List<RestaurantTable> free, int partySize) {
+        // 1. Une seule table convient : on prend la plus petite suffisante pour ne
+        //    pas gaspiller les grandes tables ni mobiliser plusieurs tables pour rien.
+        Optional<RestaurantTable> single = free.stream()
+                .filter(t -> t.getCapacity() >= partySize)
+                .min(Comparator.comparing(RestaurantTable::getCapacity));
+        if (single.isPresent()) {
+            return List.of(single.get());
+        }
+        // 2. Sinon on combine les plus grandes tables libres jusqu'à la capacité
+        //    demandée (minimise le nombre de tables mobilisées).
+        List<RestaurantTable> byCapacityDesc = free.stream()
+                .sorted(Comparator.comparing(RestaurantTable::getCapacity).reversed())
+                .toList();
+        List<RestaurantTable> picked = new ArrayList<>();
+        int seated = 0;
+        for (RestaurantTable table : byCapacityDesc) {
+            picked.add(table);
+            seated += table.getCapacity();
+            if (seated >= partySize) {
+                return picked;
+            }
+        }
+        // Même en combinant toutes les tables libres, le groupe ne tient pas.
+        return List.of();
     }
 
     /** No configured hours means always open, so an incomplete setup never blocks a booking. */

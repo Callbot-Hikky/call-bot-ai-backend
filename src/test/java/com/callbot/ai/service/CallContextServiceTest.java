@@ -83,7 +83,20 @@ class CallContextServiceTest {
         assertThat(context.restaurant().name()).isEqualTo("Chez Test");
         assertThat(context.attributes()).containsEntry("halal", true);
         assertThat(context.hours()).hasSize(1);
-        assertThat(context.policies().maxPartySize()).isEqualTo(6);
+        // Les tables peuvent être combinées : le plafond = min(15, capacité
+        // totale) = min(15, 2 + 6) = 8, et non plus la plus grande table isolée.
+        assertThat(context.policies().maxPartySize()).isEqualTo(8);
+    }
+
+    @Test
+    void context_maxPartySize_cappedAt15() {
+        when(restaurantRepository.findByPhoneNumber(PHONE)).thenReturn(java.util.Optional.of(restaurant()));
+        // Capacité totale 8+6+6 = 20 > 15 → plafonné à 15.
+        when(tableRepository.findByRestaurantId(restaurantId))
+                .thenReturn(List.of(table(8), table(6), table(6)));
+        when(hoursRepository.findByRestaurantId(restaurantId)).thenReturn(List.of());
+
+        assertThat(callContextService.context(PHONE).policies().maxPartySize()).isEqualTo(15);
     }
 
     @Test
@@ -150,13 +163,58 @@ class CallContextServiceTest {
     }
 
     @Test
+    void availability_whenPartyExceedsCap_refusesPartyTooLarge() {
+        when(restaurantRepository.findByPhoneNumber(PHONE)).thenReturn(java.util.Optional.of(restaurant()));
+
+        AvailabilityResponse response = callContextService.availability(PHONE, SLOT, null, 16);
+
+        assertThat(response.available()).isFalse();
+        assertThat(response.reason()).isEqualTo("party_too_large");
+        assertThat(response.tableIds()).isEmpty();
+    }
+
+    @Test
+    void availability_whenNoSingleTableFits_combinesFreeTables() {
+        RestaurantTable big = table(8);
+        RestaurantTable medium = table(4);
+        RestaurantTable small = table(4);
+        when(restaurantRepository.findByPhoneNumber(PHONE)).thenReturn(java.util.Optional.of(restaurant()));
+        when(hoursRepository.findByRestaurantId(restaurantId)).thenReturn(List.of());
+        when(tableRepository.findByRestaurantId(restaurantId)).thenReturn(List.of(big, medium, small));
+        when(reservationRepository.findBusyTableIds(eq(restaurantId), any(), any())).thenReturn(List.of());
+
+        // 10 personnes : aucune table unique ne suffit → combinaison (8 + 4).
+        AvailabilityResponse response = callContextService.availability(PHONE, SLOT, null, 10);
+
+        assertThat(response.available()).isTrue();
+        assertThat(response.reason()).isNull();
+        assertThat(response.tableIds()).hasSize(2);
+        // Plus grandes tables d'abord : la 8 puis une 4 (somme 12 ≥ 10).
+        assertThat(response.tableIds().get(0)).isEqualTo(big.getId());
+        assertThat(response.tableId()).isEqualTo(big.getId());
+    }
+
+    @Test
+    void availability_whenEvenCombinedTablesAreTooSmall_refusesNoTable() {
+        when(restaurantRepository.findByPhoneNumber(PHONE)).thenReturn(java.util.Optional.of(restaurant()));
+        when(hoursRepository.findByRestaurantId(restaurantId)).thenReturn(List.of());
+        // Capacité totale 2 + 2 = 4, groupe de 6 (≤ 15) : impossible même en combinant.
+        when(tableRepository.findByRestaurantId(restaurantId)).thenReturn(List.of(table(2), table(2)));
+        when(reservationRepository.findBusyTableIds(eq(restaurantId), any(), any())).thenReturn(List.of());
+
+        AvailabilityResponse response = callContextService.availability(PHONE, SLOT, null, 6);
+
+        assertThat(response.available()).isFalse();
+        assertThat(response.reason()).isEqualTo("no_table");
+    }
+
+    @Test
     void availability_whenRestaurantClosedAtThatTime_refusesWithClosed() {
         when(restaurantRepository.findByPhoneNumber(PHONE)).thenReturn(java.util.Optional.of(restaurant()));
         // Friday lunch only: the 20:00 Paris slot falls outside opening hours.
         when(hoursRepository.findByRestaurantId(restaurantId)).thenReturn(List.of(
                 RestaurantHours.builder().dayOfWeek((short) 4).service("lunch")
                         .opensAt(LocalTime.of(12, 0)).closesAt(LocalTime.of(14, 30)).isClosed(false).build()));
-        when(tableRepository.findByRestaurantId(restaurantId)).thenReturn(List.of(table(4)));
 
         AvailabilityResponse response = callContextService.availability(PHONE, SLOT, null, 2);
 

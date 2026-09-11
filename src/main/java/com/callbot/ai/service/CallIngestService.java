@@ -1,6 +1,9 @@
 package com.callbot.ai.service;
 
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.context.ApplicationEventPublisher;
@@ -72,10 +75,12 @@ public class CallIngestService {
                 .build());
 
         Booking booking = request.reservation();
+        Set<UUID> tableIds = resolveTableIds(booking.tableIds(), booking.tableId());
         Reservation reservation = Reservation.builder()
                 .restaurantId(restaurant.getId())
                 .customerId(customer.getId())
-                .tableId(booking.tableId())
+                .tableId(tableIds.isEmpty() ? null : tableIds.iterator().next())
+                .tableIds(tableIds)
                 .callId(call.getId())
                 .startsAt(booking.startsAt())
                 .endsAt(booking.endsAt())
@@ -91,6 +96,25 @@ public class CallIngestService {
 
         return new CallIngestResponse(call.getId(), customer.getId(),
                 ReservationResponse.from(saved), false);
+    }
+
+    /**
+     * Tables retenues : la liste {@code tableIds} (groupe réparti) si fournie,
+     * sinon la table unique {@code tableId}. Ordre préservé, doublons/null retirés.
+     */
+    private static Set<UUID> resolveTableIds(List<UUID> tableIds, UUID tableId) {
+        Set<UUID> result = new LinkedHashSet<>();
+        if (tableIds != null) {
+            for (UUID id : tableIds) {
+                if (id != null) {
+                    result.add(id);
+                }
+            }
+        }
+        if (result.isEmpty() && tableId != null) {
+            result.add(tableId);
+        }
+        return result;
     }
 
     /** Name and email are only updated when provided, to avoid overwriting data with null. */

@@ -57,7 +57,7 @@ class CallIngestServiceTest {
     private CallIngestRequest request() {
         return new CallIngestRequest(SID, RESTO_PHONE, CALLER_PHONE,
                 new Caller(CALLER_PHONE, "Alice", null, null),
-                new Booking(null,
+                new Booking(null, null,
                         OffsetDateTime.parse("2030-01-01T19:00:00Z"),
                         OffsetDateTime.parse("2030-01-01T21:00:00Z"),
                         2, null));

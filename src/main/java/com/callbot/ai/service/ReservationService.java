@@ -73,6 +73,9 @@ public class ReservationService {
                 .restaurantId(request.restaurantId())
                 .customerId(request.customerId())
                 .tableId(request.tableId())
+                // La détection d'occupation lit la table de liaison : une résa
+                // mono-table doit donc aussi y figurer (dérivée du tableId).
+                .tableIds(singleOrEmpty(request.tableId()))
                 .callId(request.callId())
                 .startsAt(request.startsAt())
                 .endsAt(request.endsAt())
@@ -141,6 +144,7 @@ public class ReservationService {
         }
         reservation.setCustomerId(request.customerId());
         reservation.setTableId(request.tableId());
+        reservation.setTableIds(singleOrEmpty(request.tableId()));
         reservation.setCallId(request.callId());
         reservation.setStartsAt(request.startsAt());
         reservation.setEndsAt(request.endsAt());
@@ -329,12 +333,24 @@ public class ReservationService {
      */
     private ReservationResponse toResponse(Reservation reservation, Set<String> expand) {
         RestaurantTableResponse table = null;
+        List<RestaurantTableResponse> tables = null;
         CustomerResponse customer = null;
         RestaurantSummaryResponse restaurant = null;
-        if (expand.contains("table") && reservation.getTableId() != null) {
-            table = tableRepository.findById(reservation.getTableId())
-                    .map(RestaurantTableResponse::from)
-                    .orElse(null);
+        if (expand.contains("table")) {
+            if (reservation.getTableId() != null) {
+                table = tableRepository.findById(reservation.getTableId())
+                        .map(RestaurantTableResponse::from)
+                        .orElse(null);
+            }
+            Set<UUID> ids = reservation.getTableIds();
+            if (ids != null && !ids.isEmpty()) {
+                List<RestaurantTableResponse> resolved = ids.stream()
+                        .flatMap(id -> tableRepository.findById(id)
+                                .map(RestaurantTableResponse::from)
+                                .stream())
+                        .toList();
+                tables = resolved.isEmpty() ? null : resolved;
+            }
         }
         if (expand.contains("customer") && reservation.getCustomerId() != null) {
             customer = customerRepository.findById(reservation.getCustomerId())
@@ -346,7 +362,7 @@ public class ReservationService {
                     .map(RestaurantSummaryResponse::from)
                     .orElse(null);
         }
-        return ReservationResponse.from(reservation, table, customer, restaurant,
+        return ReservationResponse.from(reservation, table, tables, customer, restaurant,
                 pendingTopUpOf(reservation));
     }
 
@@ -382,5 +398,14 @@ public class ReservationService {
         return scope.userIdOf(callerEmail)
                 .orElseThrow(() -> new InvalidRequestException(
                         "Only a signed-in staff member can waive a guarantee"));
+    }
+
+    /** Table unique → ensemble (éventuellement vide) pour la table de liaison. */
+    private static Set<UUID> singleOrEmpty(UUID tableId) {
+        Set<UUID> ids = new HashSet<>();
+        if (tableId != null) {
+            ids.add(tableId);
+        }
+        return ids;
     }
 }
