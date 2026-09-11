@@ -55,6 +55,10 @@ public class SecurityConfig {
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
                         // Payment webhook: unauthenticated, trust is the provider's signed webhook header.
                         .requestMatchers(HttpMethod.POST, "/api/offers/webhook").permitAll()
+                        // Reservation en ligne : trois routes publiques nommees, jamais de joker /api/public/**.
+                        .requestMatchers(HttpMethod.GET, "/api/public/restaurants/*/slots",
+                                "/api/public/reservations/*").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/public/restaurants/*/reservations").permitAll()
                         // Call endpoints reserved for the AI microservice (API key).
                         .requestMatchers(HttpMethod.POST, "/api/calls/ingest").hasRole("SERVICE")
                         .requestMatchers(HttpMethod.GET, "/api/calls/context", "/api/calls/availability")
