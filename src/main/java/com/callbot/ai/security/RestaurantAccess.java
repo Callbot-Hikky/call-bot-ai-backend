@@ -5,6 +5,7 @@ import java.util.UUID;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.model.Restaurant;
@@ -27,6 +28,7 @@ public class RestaurantAccess {
     private final UserRepository userRepository;
     private final RestaurantRepository restaurantRepository;
 
+    @Transactional(readOnly = true)
     public Restaurant requireOwned(UUID restaurantId, Authentication authentication) {
         String email = authentication.getName();
         User user = userRepository.findByEmail(email)
