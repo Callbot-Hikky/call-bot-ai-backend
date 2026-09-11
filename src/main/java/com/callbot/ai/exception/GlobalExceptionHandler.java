@@ -60,11 +60,6 @@ public class GlobalExceptionHandler {
                         "You do not have access to this restaurant"));
     }
 
-    @ExceptionHandler(MenuFileException.class)
-    public ResponseEntity<ApiError> handleMenuFile(MenuFileException ex) {
-        return ResponseEntity.status(ex.getStatus())
-                .body(ApiError.of(ex.getStatus().value(), ex.getCode(), ex.getMessage()));
-    }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<ApiError> handleMaxUpload(MaxUploadSizeExceededException ex) {
