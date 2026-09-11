@@ -239,8 +239,11 @@ public class ReservationService {
         if (candidates.isEmpty()) {
             return null;
         }
-        Set<UUID> busy = new HashSet<>(reservationRepository.findBusyTableIdsExcluding(
-                restaurantId, startsAt, endsAt, excludeReservationId));
+        // Sans reservation a exclure, la requete « excluant » comparerait a NULL et ne
+        // renverrait rien : toutes les tables paraitraient libres.
+        Set<UUID> busy = new HashSet<>(excludeReservationId == null
+                ? reservationRepository.findBusyTableIds(restaurantId, startsAt, endsAt)
+                : reservationRepository.findBusyTableIdsExcluding(restaurantId, startsAt, endsAt, excludeReservationId));
         return candidates.stream()
                 .filter(t -> !busy.contains(t.getId()))
                 .findFirst()
