@@ -1,5 +1,6 @@
 package com.callbot.ai.integration;
 
+import java.util.UUID;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
@@ -58,6 +59,13 @@ class MenuIntegrationTest extends AbstractIntegrationTest {
         byte[] magic = {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
         System.arraycopy(magic, 0, bytes, 0, magic.length);
         return bytes;
+    }
+
+    @Test
+    void otherPublicPathsStayProtected() throws Exception {
+        // Le joker /api/public/** n'existe plus : seule la carte est anonyme.
+        mockMvc.perform(get("/api/public/restaurants/" + UUID.randomUUID() + "/anything"))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

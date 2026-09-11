@@ -69,7 +69,10 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
                         // Lecture publique du menu (lien dans le message de confirmation, QR code).
-                        .requestMatchers(HttpMethod.GET, "/api/public/**").permitAll()
+                        // Seules les deux URL publiques du menu sont anonymes : un futur controleur
+                        // sous /api/public restera protege tant qu'il n'est pas liste ici.
+                        .requestMatchers(HttpMethod.GET, "/api/public/restaurants/*/menu",
+                                "/api/public/restaurants/*/menu/files/*").permitAll()
                         // Call endpoints reserved for the AI microservice (API key).
                         .requestMatchers(HttpMethod.POST, "/api/calls/ingest").hasRole("SERVICE")
                         .requestMatchers(HttpMethod.GET, "/api/calls/context", "/api/calls/availability")
