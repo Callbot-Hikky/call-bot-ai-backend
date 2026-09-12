@@ -4,6 +4,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.TransactionSystemException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -87,9 +88,11 @@ public class GlobalExceptionHandler {
      * carried by the database cause lets us return a machine-readable code and a
      * precise message instead of one generic conflict.
      */
-    @ExceptionHandler(DataIntegrityViolationException.class)
-    public ResponseEntity<ApiError> handleDataIntegrity(DataIntegrityViolationException ex) {
-        Throwable cause = ex.getMostSpecificCause();
+    @ExceptionHandler({ DataIntegrityViolationException.class, TransactionSystemException.class })
+    public ResponseEntity<ApiError> handleDataIntegrity(Exception ex) {
+        Throwable cause = ex instanceof DataIntegrityViolationException dive
+                ? dive.getMostSpecificCause()
+                : rootCause(ex);
         String detail = cause.getMessage() == null ? "" : cause.getMessage().toLowerCase();
 
         String code = "conflict";
@@ -103,5 +106,14 @@ public class GlobalExceptionHandler {
         }
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiError.of(HttpStatus.CONFLICT.value(), code, message));
+    }
+
+    /** Un trigger de contrainte differe echoue a la validation : la cause utile est tout au fond. */
+    private static Throwable rootCause(Throwable ex) {
+        Throwable current = ex;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current;
     }
 }
