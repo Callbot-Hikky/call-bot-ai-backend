@@ -1,5 +1,6 @@
 package com.callbot.ai.integration;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -96,8 +97,7 @@ class CallIngestIntegrationTest extends AbstractIntegrationTest {
 
     private void seedRestaurant(String ownerEmail, String phone) throws Exception {
         String token = registerAndGetToken(ownerEmail);
-        UUID organizationId = organizationRepository.save(
-                Organization.builder().name("Ingest Org").build()).getId();
+        UUID organizationId = organizationOf(token);
         mockMvc.perform(post("/api/restaurants")
                 .header("Authorization", "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -120,5 +120,13 @@ class CallIngestIntegrationTest extends AbstractIntegrationTest {
     /** API key header name (mirrors ServiceApiKeyFilter, which is package-private). */
     private static final class ServiceApiKeyHeader {
         static final String NAME = "X-Api-Key";
+    }
+
+    /** L'organisation creee a l'inscription : la seule sur laquelle l'utilisateur peut agir. */
+    private UUID organizationOf(String token) throws Exception {
+        String me = mockMvc.perform(get("/api/me").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return UUID.fromString(JsonPath.read(me, "$.organizationId"));
     }
 }

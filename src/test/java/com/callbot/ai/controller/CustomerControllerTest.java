@@ -25,6 +25,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.callbot.ai.dto.CustomerResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.security.JwtAuthenticationFilter;
+import com.callbot.ai.security.RestaurantAccess;
 import com.callbot.ai.security.ServiceApiKeyFilter;
 import com.callbot.ai.service.CustomerService;
 
@@ -40,6 +41,8 @@ class CustomerControllerTest {
 
     @MockitoBean
     private CustomerService customerService;
+    @MockitoBean
+    private RestaurantAccess restaurantAccess;
 
     private CustomerResponse sample() {
         return new CustomerResponse(UUID.randomUUID(), UUID.randomUUID(), "+33600000000",
@@ -102,6 +105,8 @@ class CustomerControllerTest {
 
     @Test
     void delete_returns204() throws Exception {
+        // La propriete se verifie sur la fiche existante : le service doit la renvoyer.
+        when(customerService.get(any())).thenReturn(sample());
         mockMvc.perform(delete("/api/customers/" + UUID.randomUUID()))
                 .andExpect(status().isNoContent());
     }

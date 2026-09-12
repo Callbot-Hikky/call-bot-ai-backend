@@ -140,8 +140,7 @@ class PublicBookingIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         String token = JsonPath.read(register, "$.accessToken");
-        UUID organizationId = organizationRepository.save(
-                Organization.builder().name("Booking Org " + email).build()).getId();
+        UUID organizationId = organizationOf(token);
         String restaurant = mockMvc.perform(post("/api/restaurants")
                 .header("Authorization", "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -158,5 +157,13 @@ class PublicBookingIntegrationTest extends AbstractIntegrationTest {
                         {"restaurantId":"%s","name":"T1","capacity":4}""".formatted(restaurantId)))
                 .andExpect(status().isCreated());
         return restaurantId;
+    }
+
+    /** L'organisation creee a l'inscription : la seule sur laquelle l'utilisateur peut agir. */
+    private UUID organizationOf(String token) throws Exception {
+        String me = mockMvc.perform(get("/api/me").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return UUID.fromString(JsonPath.read(me, "$.organizationId"));
     }
 }
