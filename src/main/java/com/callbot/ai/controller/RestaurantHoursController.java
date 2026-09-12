@@ -48,8 +48,7 @@ public class RestaurantHoursController {
             restaurantAccess.requireOwned(restaurantId, authentication);
             return hoursService.list(restaurantId);
         }
-        Set<UUID> owned = restaurantAccess.ownedRestaurantIds(authentication);
-        return hoursService.list(null).stream().filter(h -> owned.contains(h.restaurantId())).toList();
+        return hoursService.listOwned(restaurantAccess.ownedRestaurantIds(authentication));
     }
 
     @GetMapping("/{id}")

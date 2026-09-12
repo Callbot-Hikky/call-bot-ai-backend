@@ -69,6 +69,7 @@ public class MenuService {
      */
     public MenuResponse upsert(UUID restaurantId, MenuRequest request) {
         requireRestaurant(restaurantId);
+        fileRepository.lockMenu(restaurantId);
         JsonNode manual = request.manual();
         if (manual != null && !manual.isObject()) {
             throw new MenuFileException(HttpStatus.BAD_REQUEST, "invalid_manual",
