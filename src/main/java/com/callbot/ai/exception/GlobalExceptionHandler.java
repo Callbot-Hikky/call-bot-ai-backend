@@ -3,6 +3,8 @@ package com.callbot.ai.exception;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.TransactionSystemException;
 import org.springframework.http.HttpStatus;
@@ -19,6 +21,8 @@ import com.callbot.ai.dto.ApiError;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiError> handleValidation(MethodArgumentNotValidException ex) {
@@ -103,6 +107,13 @@ public class GlobalExceptionHandler {
         } else if (detail.contains("uq_customers_restaurant_phone")) {
             code = "duplicate_phone";
             message = "A customer already exists with this phone number";
+        } else if (ex instanceof TransactionSystemException) {
+            // Un commit qui echoue pour une autre raison (connexion perdue, delai) n'est pas un
+            // conflit : un 409 dirait au client de ne pas reessayer, ce serait faux.
+            log.error("Transaction failed at commit", ex);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiError.of(HttpStatus.INTERNAL_SERVER_ERROR.value(), "internal_error",
+                            "The request could not be completed"));
         }
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiError.of(HttpStatus.CONFLICT.value(), code, message));
