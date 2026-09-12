@@ -112,6 +112,7 @@ class MenuServiceTest {
         assertThat(response.mode()).isEqualTo("none");
         assertThat(response.files()).isEmpty();
         assertThat(response.limits().imageMaxCount()).isEqualTo(8);
+        assertThat(response.limits().pdfMaxCount()).isEqualTo(5);
     }
 
     @Test
@@ -215,16 +216,31 @@ class MenuServiceTest {
     // --- upload
 
     @Test
-    void upload_pdf_replacesPreviousPdf() {
+    void upload_pdf_appendsAfterTheLastPdfAndIgnoresImages() {
         restaurantExists();
+        when(fileRepository.findSummariesByRestaurantIdOrderByPositionAscCreatedAtAsc(restaurantId))
+                .thenReturn(List.of(summary(UUID.randomUUID(), "pdf", 0), summary(UUID.randomUUID(), "image", 5)));
         when(fileRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(menuRepository.findById(restaurantId)).thenReturn(Optional.empty());
-        noFiles();
 
         menuService.upload(restaurantId, pdf(2048));
 
-        verify(fileRepository).deleteByRestaurantIdAndKind(restaurantId, "pdf");
-        verify(fileRepository).save(any(RestaurantMenuFile.class));
+        verify(fileRepository).save(org.mockito.ArgumentMatchers.argThat(
+                f -> f.getKind().equals("pdf") && f.getPosition() == 1
+                        && f.getContentType().equals("application/pdf")));
+    }
+
+    @Test
+    void upload_sixthPdf_isRejectedWith409() {
+        restaurantExists();
+        when(fileRepository.findSummariesByRestaurantIdOrderByPositionAscCreatedAtAsc(restaurantId))
+                .thenReturn(java.util.stream.IntStream.range(0, 5)
+                        .mapToObj(i -> summary(UUID.randomUUID(), "pdf", i)).toList());
+
+        assertThatThrownBy(() -> menuService.upload(restaurantId, pdf(2048)))
+                .isInstanceOf(MenuFileException.class)
+                .satisfies(e -> assertThat(((MenuFileException) e).getStatus()).isEqualTo(HttpStatus.CONFLICT));
+        verify(fileRepository, never()).save(any());
     }
 
     @Test
@@ -341,6 +357,7 @@ class MenuServiceTest {
         restaurantExists();
         UUID a = UUID.randomUUID();
         UUID b = UUID.randomUUID();
+        when(fileRepository.findSummaryByIdAndRestaurantId(b, restaurantId)).thenReturn(Optional.of(summary(b, "image", 1)));
         when(fileRepository.findSummariesByRestaurantIdOrderByPositionAscCreatedAtAsc(restaurantId))
                 .thenReturn(List.of(summary(a, "image", 0), summary(b, "image", 1)));
         when(menuRepository.findById(restaurantId)).thenReturn(Optional.empty());
@@ -352,10 +369,29 @@ class MenuServiceTest {
     }
 
     @Test
+    void reorder_pdfs_onlyConsidersPdfs() {
+        restaurantExists();
+        UUID a = UUID.randomUUID();
+        UUID b = UUID.randomUUID();
+        UUID image = UUID.randomUUID();
+        when(fileRepository.findSummaryByIdAndRestaurantId(b, restaurantId)).thenReturn(Optional.of(summary(b, "pdf", 1)));
+        when(fileRepository.findSummariesByRestaurantIdOrderByPositionAscCreatedAtAsc(restaurantId))
+                .thenReturn(List.of(summary(a, "pdf", 0), summary(b, "pdf", 1), summary(image, "image", 0)));
+        when(menuRepository.findById(restaurantId)).thenReturn(Optional.empty());
+
+        menuService.reorder(restaurantId, new MenuFileOrderRequest(List.of(b, a)));
+
+        verify(fileRepository).updatePosition(b, restaurantId, 0);
+        verify(fileRepository).updatePosition(a, restaurantId, 1);
+        verify(fileRepository, never()).updatePosition(org.mockito.ArgumentMatchers.eq(image), any(), anyInt());
+    }
+
+    @Test
     void reorder_partialList_isRejectedWith400() {
         restaurantExists();
         UUID a = UUID.randomUUID();
         UUID b = UUID.randomUUID();
+        when(fileRepository.findSummaryByIdAndRestaurantId(b, restaurantId)).thenReturn(Optional.of(summary(b, "image", 1)));
         when(fileRepository.findSummariesByRestaurantIdOrderByPositionAscCreatedAtAsc(restaurantId))
                 .thenReturn(List.of(summary(a, "image", 0), summary(b, "image", 1)));
 
@@ -368,8 +404,7 @@ class MenuServiceTest {
     @Test
     void reorder_unknownId_isRejectedWith400() {
         restaurantExists();
-        when(fileRepository.findSummariesByRestaurantIdOrderByPositionAscCreatedAtAsc(restaurantId))
-                .thenReturn(List.of(summary(UUID.randomUUID(), "image", 0)));
+        when(fileRepository.findSummaryByIdAndRestaurantId(any(), any())).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> menuService.reorder(restaurantId, new MenuFileOrderRequest(List.of(UUID.randomUUID()))))
                 .isInstanceOf(MenuFileException.class)

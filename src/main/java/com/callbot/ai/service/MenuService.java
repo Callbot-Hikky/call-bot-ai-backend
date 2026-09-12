@@ -90,8 +90,9 @@ public class MenuService {
 
     /**
      * Ajoute un fichier. Le type est lu sur les octets, jamais sur le nom ni sur
-     * le Content-Type annonce. Un PDF remplace le PDF precedent ; une image
-     * s'ajoute apres la derniere position, huit au maximum.
+     * le Content-Type annonce. Le fichier s'ajoute apres la derniere position de
+     * son genre : jusqu'a cinq PDF (plats, vins, desserts...) et huit images.
+     * Les genres ne se melangent pas a la publication : un seul mode est visible.
      */
     public MenuResponse upload(UUID restaurantId, byte[] bytes) {
         requireRestaurant(restaurantId);
@@ -106,17 +107,13 @@ public class MenuService {
                     "File exceeds the maximum size of " + max + " bytes");
         }
 
-        int position = 0;
-        if (type == MenuFileType.PDF) {
-            fileRepository.deleteByRestaurantIdAndKind(restaurantId, RestaurantMenuFile.KIND_PDF);
-        } else {
-            List<MenuFileSummary> images = images(restaurantId);
-            if (images.size() >= LIMITS.imageMaxCount()) {
-                throw new MenuFileException(HttpStatus.CONFLICT, "too_many_files",
-                        "A menu holds at most " + LIMITS.imageMaxCount() + " images");
-            }
-            position = images.isEmpty() ? 0 : images.get(images.size() - 1).getPosition() + 1;
+        List<MenuFileSummary> siblings = filesOfKind(restaurantId, type.kind());
+        int maxCount = LIMITS.maxCountFor(type.kind());
+        if (siblings.size() >= maxCount) {
+            throw new MenuFileException(HttpStatus.CONFLICT, "too_many_files",
+                    "A menu holds at most " + maxCount + " files of kind " + type.kind());
         }
+        int position = siblings.isEmpty() ? 0 : siblings.get(siblings.size() - 1).getPosition() + 1;
 
         fileRepository.save(RestaurantMenuFile.builder()
                 .restaurantId(restaurantId)
@@ -130,8 +127,8 @@ public class MenuService {
     }
 
     /**
-     * Supprime un fichier. Les images restantes sont renumerotees sans trou, et
-     * si le mode publie n'a plus aucun fichier, le menu repasse en « aucun ».
+     * Supprime un fichier. Les fichiers restants du meme genre sont renumerotes
+     * sans trou, et si le mode publie n'a plus aucun fichier, le menu repasse en « aucun ».
      */
     public MenuResponse deleteFile(UUID restaurantId, UUID fileId) {
         requireRestaurant(restaurantId);
@@ -139,9 +136,7 @@ public class MenuService {
         MenuFileSummary file = fileRepository.findSummaryByIdAndRestaurantId(fileId, restaurantId)
                 .orElseThrow(() -> new ResourceNotFoundException("MenuFile", fileId));
         fileRepository.deleteByIdAndRestaurantId(fileId, restaurantId);
-        if (RestaurantMenuFile.KIND_IMAGE.equals(file.getKind())) {
-            renumber(restaurantId, images(restaurantId));
-        }
+        renumber(restaurantId, filesOfKind(restaurantId, file.getKind()));
         RestaurantMenu menu = menuRepository.findById(restaurantId).orElse(null);
         if (menu != null && file.getKind().equals(kindForMode(menu.getMode()))
                 && fileRepository.countByRestaurantIdAndKind(restaurantId, file.getKind()) == 0) {
@@ -152,22 +147,27 @@ public class MenuService {
     }
 
     /**
-     * Reordonne les images : position = index de l'id dans la liste recue. La
-     * liste doit contenir chaque image du menu exactement une fois, sinon deux
-     * images finiraient a la meme position. Le PDF n'a pas d'ordre.
+     * Reordonne les fichiers d'un genre : position = index de l'id dans la liste
+     * recue. La liste doit contenir chaque fichier de ce genre exactement une fois,
+     * sinon deux fichiers finiraient a la meme position. Le genre est celui du
+     * premier id ; PDF et images se reordonnent separement.
      */
     public MenuResponse reorder(UUID restaurantId, MenuFileOrderRequest request) {
         requireRestaurant(restaurantId);
         fileRepository.lockMenu(restaurantId);
-        List<MenuFileSummary> images = images(restaurantId);
         List<UUID> ids = request.fileIds();
-        Set<UUID> expected = images.stream().map(MenuFileSummary::getId).collect(Collectors.toSet());
+        String kind = fileRepository.findSummaryByIdAndRestaurantId(ids.get(0), restaurantId)
+                .map(MenuFileSummary::getKind)
+                .orElseThrow(() -> new MenuFileException(HttpStatus.BAD_REQUEST, "invalid_file_order",
+                        "The order must list every file of one kind exactly once"));
+        List<MenuFileSummary> siblings = filesOfKind(restaurantId, kind);
+        Set<UUID> expected = siblings.stream().map(MenuFileSummary::getId).collect(Collectors.toSet());
         boolean sameSet = ids.size() == expected.size()
                 && new HashSet<>(ids).size() == ids.size()
                 && expected.containsAll(ids);
         if (!sameSet) {
             throw new MenuFileException(HttpStatus.BAD_REQUEST, "invalid_file_order",
-                    "The order must list every image of the menu exactly once");
+                    "The order must list every file of one kind exactly once");
         }
         for (int i = 0; i < ids.size(); i++) {
             fileRepository.updatePosition(ids.get(i), restaurantId, i);
@@ -217,16 +217,16 @@ public class MenuService {
                 .orElseThrow(() -> new ResourceNotFoundException("MenuFile", fileId));
     }
 
-    private List<MenuFileSummary> images(UUID restaurantId) {
+    private List<MenuFileSummary> filesOfKind(UUID restaurantId, String kind) {
         return fileRepository.findSummariesByRestaurantIdOrderByPositionAscCreatedAtAsc(restaurantId).stream()
-                .filter(f -> RestaurantMenuFile.KIND_IMAGE.equals(f.getKind()))
+                .filter(f -> kind.equals(f.getKind()))
                 .toList();
     }
 
-    private void renumber(UUID restaurantId, List<MenuFileSummary> images) {
-        for (int i = 0; i < images.size(); i++) {
-            if (images.get(i).getPosition() != i) {
-                fileRepository.updatePosition(images.get(i).getId(), restaurantId, i);
+    private void renumber(UUID restaurantId, List<MenuFileSummary> files) {
+        for (int i = 0; i < files.size(); i++) {
+            if (files.get(i).getPosition() != i) {
+                fileRepository.updatePosition(files.get(i).getId(), restaurantId, i);
             }
         }
     }
