@@ -20,6 +20,9 @@ import com.callbot.ai.dto.RestaurantHoursResponse;
 import com.callbot.ai.service.RestaurantHoursService;
 
 import jakarta.validation.Valid;
+import org.springframework.security.core.Authentication;
+import com.callbot.ai.security.RestaurantAccess;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 
 @RestController
@@ -28,31 +31,46 @@ import lombok.RequiredArgsConstructor;
 public class RestaurantHoursController {
 
     private final RestaurantHoursService hoursService;
+    private final RestaurantAccess restaurantAccess;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public RestaurantHoursResponse create(@Valid @RequestBody RestaurantHoursRequest request) {
+    public RestaurantHoursResponse create(@Valid @RequestBody RestaurantHoursRequest request,
+            Authentication authentication) {
+        restaurantAccess.requireOwned(request.restaurantId(), authentication);
         return hoursService.create(request);
     }
 
     @GetMapping
-    public List<RestaurantHoursResponse> list(@RequestParam(required = false) UUID restaurantId) {
-        return hoursService.list(restaurantId);
+    public List<RestaurantHoursResponse> list(@RequestParam(required = false) UUID restaurantId,
+            Authentication authentication) {
+        if (restaurantId != null) {
+            restaurantAccess.requireOwned(restaurantId, authentication);
+            return hoursService.list(restaurantId);
+        }
+        Set<UUID> owned = restaurantAccess.ownedRestaurantIds(authentication);
+        return hoursService.list(null).stream().filter(h -> owned.contains(h.restaurantId())).toList();
     }
 
     @GetMapping("/{id}")
-    public RestaurantHoursResponse get(@PathVariable UUID id) {
-        return hoursService.get(id);
+    public RestaurantHoursResponse get(@PathVariable UUID id, Authentication authentication) {
+        RestaurantHoursResponse hours = hoursService.get(id);
+        restaurantAccess.requireOwned(hours.restaurantId(), authentication);
+        return hours;
     }
 
     @PutMapping("/{id}")
-    public RestaurantHoursResponse update(@PathVariable UUID id, @Valid @RequestBody RestaurantHoursRequest request) {
+    public RestaurantHoursResponse update(@PathVariable UUID id, @Valid @RequestBody RestaurantHoursRequest request,
+            Authentication authentication) {
+        restaurantAccess.requireOwned(hoursService.get(id).restaurantId(), authentication);
+        restaurantAccess.requireOwned(request.restaurantId(), authentication);
         return hoursService.update(id, request);
     }
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable UUID id) {
+    public void delete(@PathVariable UUID id, Authentication authentication) {
+        restaurantAccess.requireOwned(hoursService.get(id).restaurantId(), authentication);
         hoursService.delete(id);
     }
 }
