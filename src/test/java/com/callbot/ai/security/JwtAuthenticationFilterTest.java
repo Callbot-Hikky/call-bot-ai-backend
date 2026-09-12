@@ -14,6 +14,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 
 import jakarta.servlet.http.Cookie;
 
@@ -66,6 +67,22 @@ class JwtAuthenticationFilterTest {
                 new MockFilterChain());
 
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
+    void ignoresValidTokenWhoseUserNoLongerExists() throws Exception {
+        when(jwtService.isValid("tok-ghost")).thenReturn(true);
+        when(jwtService.extractSubject("tok-ghost")).thenReturn("ghost@example.com");
+        when(userDetailsService.loadUserByUsername("ghost@example.com"))
+                .thenThrow(new UsernameNotFoundException("ghost@example.com"));
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setCookies(new Cookie("hikky_token", "tok-ghost"));
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(request, new MockHttpServletResponse(), chain);
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        assertThat(chain.getRequest()).isNotNull();
     }
 
     @Test

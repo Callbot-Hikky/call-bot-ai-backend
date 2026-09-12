@@ -34,8 +34,8 @@ import lombok.RequiredArgsConstructor;
 @Transactional(readOnly = true)
 public class CallContextService {
 
-    /** Assumed sitting duration when the caller does not state an end time. */
-    private static final Duration DEFAULT_DURATION = Duration.ofMinutes(90);
+    /** Duree d'une table sans heure de fin annoncee : regle partagee avec la reservation en ligne. */
+    private static final Duration DEFAULT_DURATION = BookingPolicy.DEFAULT_DURATION;
     private static final Duration ALTERNATIVE_STEP = Duration.ofMinutes(30);
     private static final int MAX_ALTERNATIVES = 3;
     private static final int MAX_PROBES = 8;
@@ -45,7 +45,7 @@ public class CallContextService {
      * (un très grand groupe relève d'un échange humain). En-deçà, un groupe qui
      * ne tient pas sur une seule table est réparti sur plusieurs tables libres.
      */
-    private static final int MAX_PARTY_SIZE = 15;
+    private static final int MAX_PARTY_SIZE = BookingPolicy.MAX_PARTY_SIZE;
 
     private final RestaurantRepository restaurantRepository;
     private final RestaurantHoursRepository hoursRepository;

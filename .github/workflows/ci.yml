@@ -17,5 +17,5 @@ jobs:
       - name: Make mvnw executable
         run: chmod +x ./mvnw
 
-      - name: Tests
-        run: ./mvnw test
+      - name: Tests, verification et jar
+        run: ./mvnw -B verify
