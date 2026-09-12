@@ -25,16 +25,12 @@ public interface RestaurantMenuFileRepository extends JpaRepository<RestaurantMe
 
     /**
      * Verrou transactionnel par restaurant : deux envois simultanes ne peuvent
-     * pas depasser huit images ni prendre la meme position. Un verrou consultatif
+     * pas depasser le plafond d'un genre ni prendre la meme position. Un verrou consultatif
      * plutot qu'un index unique, car le reordonnancement passe par des positions
      * transitoirement dupliquees. Libere avec la transaction.
      */
     @Query(value = "select pg_advisory_xact_lock(hashtext(cast(:restaurantId as text))) is null", nativeQuery = true)
     boolean lockMenu(@Param("restaurantId") UUID restaurantId);
-
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("delete from RestaurantMenuFile f where f.restaurantId = :restaurantId and f.kind = :kind")
-    void deleteByRestaurantIdAndKind(@Param("restaurantId") UUID restaurantId, @Param("kind") String kind);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("delete from RestaurantMenuFile f where f.id = :id and f.restaurantId = :restaurantId")

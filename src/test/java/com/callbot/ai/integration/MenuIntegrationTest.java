@@ -1,5 +1,6 @@
 package com.callbot.ai.integration;
 
+import java.util.List;
 import java.util.UUID;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -151,6 +152,50 @@ class MenuIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isOk());
         mockMvc.perform(get(publicUrl))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void severalPdfsAreKeptInOrderAndServedPublicly() throws Exception {
+        String token = registerAndGetToken("menu-pdfs@example.com");
+        String restaurantId = createOwnedRestaurant(token, "Chez Pdfs", "+33100000111");
+        byte[] pdf = new byte[128];
+        System.arraycopy("%PDF-1.7 ".getBytes(), 0, pdf, 0, 9);
+        for (String name : List.of("plats.pdf", "vins.pdf")) {
+            mockMvc.perform(multipart("/api/restaurants/" + restaurantId + "/menu/files")
+                    .file(new MockMultipartFile("file", name, "application/pdf", pdf))
+                    .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isOk());
+        }
+        String menu = mockMvc.perform(get("/api/restaurants/" + restaurantId + "/menu")
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.files.length()").value(2))
+                .andExpect(jsonPath("$.files[0].position").value(0))
+                .andExpect(jsonPath("$.files[1].position").value(1))
+                .andExpect(jsonPath("$.limits.pdfMaxCount").value(5))
+                .andReturn().getResponse().getContentAsString();
+        String first = JsonPath.read(menu, "$.files[0].id");
+        String second = JsonPath.read(menu, "$.files[1].id");
+
+        // Le second passe devant : l'ordre choisi est celui que le public voit.
+        mockMvc.perform(put("/api/restaurants/" + restaurantId + "/menu/files/order")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"fileIds\":[\"" + second + "\",\"" + first + "\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.files[0].id").value(second));
+
+        mockMvc.perform(put("/api/restaurants/" + restaurantId + "/menu")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"mode":"pdf"}"""))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/public/restaurants/" + restaurantId + "/menu"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.files.length()").value(2))
+                .andExpect(jsonPath("$.files[0].id").value(second))
+                .andExpect(jsonPath("$.files[1].id").value(first));
     }
 
     @Test
