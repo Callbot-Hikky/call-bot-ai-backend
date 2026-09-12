@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.transaction.TransactionSystemException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import com.callbot.ai.dto.ApiError;
@@ -30,5 +31,25 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
         assertThat(response.getBody().error()).isEqualTo("forbidden");
         assertThat(response.getBody().message()).doesNotContain("123");
+    }
+
+    @Test
+    void transactionFailureWithoutKnownConstraint_maps500NotConflict() {
+        GlobalExceptionHandler handler = new GlobalExceptionHandler();
+        ResponseEntity<ApiError> response = handler.handleDataIntegrity(
+                new TransactionSystemException("commit failed", new RuntimeException("connection reset")));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+        assertThat(response.getBody().error()).isEqualTo("internal_error");
+    }
+
+    @Test
+    void transactionFailureOnOverlapTrigger_staysA409TableOverlap() {
+        GlobalExceptionHandler handler = new GlobalExceptionHandler();
+        ResponseEntity<ApiError> response = handler.handleDataIntegrity(new TransactionSystemException("commit failed",
+                new RuntimeException("ERROR: no_overlapping_reservation: table 4 is busy")));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody().error()).isEqualTo("table_overlap");
     }
 }

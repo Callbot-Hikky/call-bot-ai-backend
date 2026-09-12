@@ -125,12 +125,38 @@ class PublicBookingIntegrationTest extends AbstractIntegrationTest {
         mockMvc.perform(get("/api/public/reservations/" + UUID.randomUUID()))
                 .andExpect(status().isNotFound());
 
+        // L'identifiant interne, visible du back-office, n'ouvre pas la route publique : seul le jeton le fait.
+        String guardSlots = mockMvc.perform(get("/api/public/restaurants/" + restaurantId + "/slots?partySize=2"))
+                .andReturn().getResponse().getContentAsString();
+        String guardStart = JsonPath.read(guardSlots, "$.days[1].slots[0].startsAt");
+        String publicView = mockMvc.perform(post("/api/public/restaurants/" + restaurantId + "/reservations")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"startsAt":"%s","partySize":2,
+                         "customer":{"firstName":"Nadia","phone":"0612345678"}}"""
+                        .formatted(guardStart)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String publicToken = JsonPath.read(publicView, "$.id");
+        String adminList = mockMvc.perform(get("/api/reservations?restaurantId=" + restaurantId)
+                .header("Authorization", "Bearer " + ownerToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String internalId = JsonPath.read(adminList, "$[0].id");
+        org.assertj.core.api.Assertions.assertThat(internalId).isNotEqualTo(publicToken);
+        org.assertj.core.api.Assertions.assertThat(adminList).doesNotContain(publicToken);
+        mockMvc.perform(get("/api/public/reservations/" + internalId))
+                .andExpect(status().isNotFound());
+
         // Rien d'autre sous /api/public n'est ouvert.
         mockMvc.perform(get("/api/public/restaurants/" + restaurantId + "/anything"))
                 .andExpect(status().isUnauthorized());
         mockMvc.perform(get("/api/reservations"))
                 .andExpect(status().isUnauthorized());
     }
+
+    // Jeton du dernier proprietaire cree : sert aux verifications cote back-office.
+    private String ownerToken;
 
     private String restaurantWithOneTableOfFour(String email, String phone) throws Exception {
         String register = mockMvc.perform(post("/api/auth/register")
@@ -140,6 +166,7 @@ class PublicBookingIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         String token = JsonPath.read(register, "$.accessToken");
+        ownerToken = token;
         UUID organizationId = organizationOf(token);
         String restaurant = mockMvc.perform(post("/api/restaurants")
                 .header("Authorization", "Bearer " + token)

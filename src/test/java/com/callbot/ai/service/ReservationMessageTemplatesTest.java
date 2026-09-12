@@ -27,6 +27,7 @@ class ReservationMessageTemplatesTest {
 
     private final UUID restaurantId = UUID.randomUUID();
     private final UUID reservationId = UUID.randomUUID();
+    private final UUID token = UUID.randomUUID();
 
     private ReservationMessageTemplates templates(String baseUrl) {
         return new ReservationMessageTemplates(new FrontendProperties(baseUrl), menuRepository);
@@ -35,6 +36,7 @@ class ReservationMessageTemplatesTest {
     private Reservation reservation() {
         return Reservation.builder()
                 .id(reservationId)
+                .publicToken(token)
                 .restaurantId(restaurantId)
                 .startsAt(OffsetDateTime.parse("2026-09-20T19:30:00+02:00"))
                 .endsAt(OffsetDateTime.parse("2026-09-20T21:00:00+02:00"))
@@ -64,9 +66,9 @@ class ReservationMessageTemplatesTest {
         String message = templates("https://app.hikky.fr/").forClient(reservation(), customer(), restaurant());
 
         assertThat(message).contains("[Voir le menu](https://app.hikky.fr/client/restaurants/"
-                + restaurantId + "/menu?reservation=" + reservationId + ")");
+                + restaurantId + "/menu?reservation=" + token + ")");
         assertThat(message).contains("[Choisissez un autre horaire](https://app.hikky.fr/client/reservations/"
-                + reservationId + "/reschedule)");
+                + token + "/reschedule)");
     }
 
     @Test
@@ -95,7 +97,8 @@ class ReservationMessageTemplatesTest {
         String message = templates("https://app.hikky.fr").forClientUpdated(reservation(), customer(), restaurant());
 
         assertThat(message).contains("a bien été mise à jour");
-        assertThat(message).contains("/client/restaurants/" + restaurantId + "/menu?reservation=" + reservationId);
+        assertThat(message).contains("/client/restaurants/" + restaurantId + "/menu?reservation=" + token);
+        assertThat(message).doesNotContain(reservationId.toString());
     }
 
     @Test

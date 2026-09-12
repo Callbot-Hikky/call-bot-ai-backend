@@ -90,6 +90,11 @@ public class Reservation {
     @Column(name = "cancelled_at")
     private OffsetDateTime cancelledAt;
 
+    /** Secret des routes publiques : jamais expose par l'API admin, genere par la base. */
+    @Builder.Default
+    @Column(name = "public_token", nullable = false, updatable = false)
+    private UUID publicToken = UUID.randomUUID();
+
     @PrePersist
     void onCreate() {
         OffsetDateTime now = OffsetDateTime.now();

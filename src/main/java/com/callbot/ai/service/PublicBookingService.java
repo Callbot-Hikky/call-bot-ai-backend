@@ -3,6 +3,7 @@ package com.callbot.ai.service;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashSet;
 import java.util.Optional;
 import java.util.Set;
@@ -63,12 +64,15 @@ public class PublicBookingService {
             throw new BookingException(HttpStatus.BAD_REQUEST, "date_out_of_window",
                     "fromDate must be within the next " + BookingPolicy.WINDOW_DAYS + " days");
         }
-        return reservationService.slotsFor(restaurant, from, partySize, BookingPolicy.DEFAULT_DURATION, null);
+        // Depuis J+3, il ne reste que 4 jours a proposer : jamais un creneau que create() refuserait.
+        int dayCount = (int) (ChronoUnit.DAYS.between(from, lastBookableDay(today)) + 1);
+        return reservationService.slotsFor(restaurant, from, dayCount, partySize, BookingPolicy.DEFAULT_DURATION, null);
     }
 
     public PublicReservationResponse create(UUID restaurantId, PublicReservationRequest request) {
         Restaurant restaurant = requireRestaurant(restaurantId);
         requirePartySize(request.partySize());
+        reservationRepository.lockRestaurant(restaurantId);
         ZoneId zone = ZoneId.of(restaurant.getTimezone());
         OffsetDateTime now = OffsetDateTime.now(zone);
         LocalDate day = request.startsAt().atZoneSameInstant(zone).toLocalDate();
@@ -118,8 +122,8 @@ public class PublicBookingService {
 
     /** Creneaux pour deplacer sa reservation : la duree d'origine, la reservation exclue des tables occupees. */
     @Transactional(readOnly = true)
-    public RescheduleSlotsResponse rescheduleSlots(UUID reservationId, Integer partySize) {
-        Reservation reservation = requireReschedulable(reservationId);
+    public RescheduleSlotsResponse rescheduleSlots(UUID token, Integer partySize) {
+        Reservation reservation = requireReschedulable(token);
         int size = partySize != null ? partySize : reservation.getPartySize();
         requirePartySize(size);
         return reservationService.rescheduleSlots(reservation.getId(), null, size);
@@ -130,10 +134,11 @@ public class PublicBookingService {
      * seul un creneau propose est accepte : table et heure de fin viennent de lui. Le nom du
      * client n'est pas modifiable ici, la route est anonyme.
      */
-    public PublicReservationResponse reschedule(UUID reservationId, PublicRescheduleRequest request) {
-        Reservation reservation = requireReschedulable(reservationId);
+    public PublicReservationResponse reschedule(UUID token, PublicRescheduleRequest request) {
+        Reservation reservation = requireReschedulable(token);
         Restaurant restaurant = requireRestaurant(reservation.getRestaurantId());
         requirePartySize(request.partySize());
+        reservationRepository.lockRestaurant(reservation.getRestaurantId());
         ZoneId zone = ZoneId.of(restaurant.getTimezone());
         OffsetDateTime now = OffsetDateTime.now(zone);
         LocalDate day = request.startsAt().atZoneSameInstant(zone).toLocalDate();
@@ -142,7 +147,14 @@ public class PublicBookingService {
             throw new BookingException(HttpStatus.BAD_REQUEST, "slot_out_of_window",
                     "The slot must be in the next " + BookingPolicy.WINDOW_DAYS + " days");
         }
-        Duration duration = Duration.between(reservation.getStartsAt(), reservation.getEndsAt());
+        Duration duration = reservation.getEndsAt() != null
+                ? Duration.between(reservation.getStartsAt(), reservation.getEndsAt())
+                : BookingPolicy.DEFAULT_DURATION;
+        Customer current = reservation.getCustomerId() == null ? null
+                : customerRepository.findById(reservation.getCustomerId()).orElse(null);
+        if (current != null) {
+            requireNoOtherReservationThatDay(restaurant, current, day, zone, reservation);
+        }
         RescheduleSlotsResponse.Slot slot = reservationService
                 .slotsFor(restaurant, day, 1, request.partySize(), duration, reservation.getId())
                 .days().stream()
@@ -173,10 +185,10 @@ public class PublicBookingService {
     }
 
     /** Une reservation annulee ou deja passee ne se deplace plus. */
-    private Reservation requireReschedulable(UUID reservationId) {
-        Reservation reservation = reservationRepository.findById(reservationId)
-                .orElseThrow(() -> new ResourceNotFoundException("Reservation", reservationId));
-        if (!List.of("pending", "confirmed").contains(reservation.getStatus())) {
+    private Reservation requireReschedulable(UUID token) {
+        Reservation reservation = findByToken(token);
+        boolean past = reservation.getStartsAt() != null && reservation.getStartsAt().isBefore(OffsetDateTime.now());
+        if (past || !List.of("pending", "confirmed").contains(reservation.getStatus())) {
             throw new BookingException(HttpStatus.CONFLICT, "not_reschedulable",
                     "This reservation can no longer be moved");
         }
@@ -184,9 +196,8 @@ public class PublicBookingService {
     }
 
     @Transactional(readOnly = true)
-    public PublicReservationResponse get(UUID reservationId) {
-        Reservation reservation = reservationRepository.findById(reservationId)
-                .orElseThrow(() -> new ResourceNotFoundException("Reservation", reservationId));
+    public PublicReservationResponse get(UUID token) {
+        Reservation reservation = findByToken(token);
         Restaurant restaurant = requireRestaurant(reservation.getRestaurantId());
         Customer customer = reservation.getCustomerId() == null ? null
                 : customerRepository.findById(reservation.getCustomerId()).orElse(null);
@@ -211,12 +222,22 @@ public class PublicBookingService {
 
     /** Un meme numero ne remplit pas le carnet : une reservation active par jour et par restaurant. */
     private void requireNoOtherReservationThatDay(Restaurant restaurant, Customer customer, LocalDate day, ZoneId zone) {
+        requireNoOtherReservationThatDay(restaurant, customer, day, zone, null);
+    }
+
+    /** En replanification, la reservation deplacee ne compte pas contre elle-meme. */
+    private void requireNoOtherReservationThatDay(Restaurant restaurant, Customer customer, LocalDate day, ZoneId zone,
+            Reservation self) {
         if (customer.getId() == null) {
             return;
         }
         OffsetDateTime from = day.atStartOfDay(zone).toOffsetDateTime();
         OffsetDateTime to = day.plusDays(1).atStartOfDay(zone).toOffsetDateTime();
         long active = reservationRepository.countActiveByCustomerBetween(restaurant.getId(), customer.getId(), from, to);
+        if (self != null && self.getStartsAt() != null
+                && !self.getStartsAt().isBefore(from) && self.getStartsAt().isBefore(to)) {
+            active--;
+        }
         if (active >= BookingPolicy.MAX_ACTIVE_PER_DAY) {
             throw new BookingException(HttpStatus.CONFLICT, "already_booked",
                     "This phone number already has a reservation that day");
@@ -243,8 +264,15 @@ public class PublicBookingService {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
+    /** Le public ne connait la reservation que par son jeton : jamais par son identifiant interne. */
+    private Reservation findByToken(UUID token) {
+        return reservationRepository.findByPublicToken(token)
+                .orElseThrow(() -> new ResourceNotFoundException("Reservation", token));
+    }
+
+    /** Le champ « id » de la vue publique est le jeton : c'est lui que le client garde dans ses liens. */
     private static PublicReservationResponse toResponse(Reservation r, Restaurant restaurant, Customer customer) {
-        return new PublicReservationResponse(r.getId(), restaurant.getId(), restaurant.getName(),
+        return new PublicReservationResponse(r.getPublicToken(), restaurant.getId(), restaurant.getName(),
                 r.getStartsAt(), r.getEndsAt(), r.getPartySize(), r.getStatus(),
                 displayName(customer));
     }

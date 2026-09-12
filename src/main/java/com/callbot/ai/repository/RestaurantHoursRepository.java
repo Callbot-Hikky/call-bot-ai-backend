@@ -1,5 +1,6 @@
 package com.callbot.ai.repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -10,4 +11,6 @@ import com.callbot.ai.model.RestaurantHours;
 public interface RestaurantHoursRepository extends JpaRepository<RestaurantHours, UUID> {
 
     List<RestaurantHours> findByRestaurantId(UUID restaurantId);
+
+    List<RestaurantHours> findByRestaurantIdIn(Collection<UUID> restaurantIds);
 }
