@@ -30,8 +30,7 @@ class RestaurantCrudIntegrationTest extends AbstractIntegrationTest {
     @Test
     void restaurantCrudLifecycle() throws Exception {
         String token = registerAndGetToken("owner-crud@example.com");
-        UUID organizationId = organizationRepository.save(
-                Organization.builder().name("Test Org").build()).getId();
+        UUID organizationId = organizationOf(token);
 
         String created = mockMvc.perform(post("/api/restaurants")
                 .header("Authorization", "Bearer " + token)
@@ -72,8 +71,7 @@ class RestaurantCrudIntegrationTest extends AbstractIntegrationTest {
     @Test
     void overlappingReservationsOnSameTableAreRejected() throws Exception {
         String token = registerAndGetToken("owner-overlap@example.com");
-        UUID organizationId = organizationRepository.save(
-                Organization.builder().name("Overlap Org").build()).getId();
+        UUID organizationId = organizationOf(token);
 
         String restaurant = mockMvc.perform(post("/api/restaurants")
                 .header("Authorization", "Bearer " + token)
@@ -117,8 +115,7 @@ class RestaurantCrudIntegrationTest extends AbstractIntegrationTest {
     @Test
     void reservationExpandsTableAndCustomerOnDemand() throws Exception {
         String token = registerAndGetToken("owner-expand@example.com");
-        UUID organizationId = organizationRepository.save(
-                Organization.builder().name("Expand Org").build()).getId();
+        UUID organizationId = organizationOf(token);
 
         String restaurant = mockMvc.perform(post("/api/restaurants")
                 .header("Authorization", "Bearer " + token)
@@ -186,5 +183,13 @@ class RestaurantCrudIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         return JsonPath.read(response, "$.accessToken");
+    }
+
+    /** L'organisation creee a l'inscription : la seule sur laquelle l'utilisateur peut agir. */
+    private UUID organizationOf(String token) throws Exception {
+        String me = mockMvc.perform(get("/api/me").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return UUID.fromString(JsonPath.read(me, "$.organizationId"));
     }
 }
