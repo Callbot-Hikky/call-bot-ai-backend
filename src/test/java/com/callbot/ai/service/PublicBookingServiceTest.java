@@ -86,7 +86,7 @@ class PublicBookingServiceTest {
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
         when(reservationService.slotsFor(eq(restaurant), eq(startsAt.toLocalDate()), eq(1), eq(2),
                 eq(BookingPolicy.DEFAULT_DURATION), eq(null))).thenReturn(slotsWith(startsAt));
-        when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "0612345678")).thenReturn(Optional.empty());
+        when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "+33612345678")).thenReturn(Optional.empty());
         when(customerRepository.save(any())).thenAnswer(i -> {
             Customer c = i.getArgument(0);
             c.setId(UUID.randomUUID());
@@ -117,10 +117,10 @@ class PublicBookingServiceTest {
     void create_reusesTheCustomerFoundByNormalizedPhone_withoutRewritingIt() {
         OffsetDateTime startsAt = tomorrowEvening();
         Customer existing = Customer.builder().id(UUID.randomUUID()).restaurantId(restaurantId)
-                .phone("0612345678").firstName("N.").build();
+                .phone("+33612345678").firstName("N.").build();
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
         when(reservationService.slotsFor(any(), any(), anyInt(), eq(2), any(), any())).thenReturn(slotsWith(startsAt));
-        when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "0612345678")).thenReturn(Optional.of(existing));
+        when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "+33612345678")).thenReturn(Optional.of(existing));
         when(customerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(reservationRepository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
 
@@ -192,10 +192,10 @@ class PublicBookingServiceTest {
     void create_whenThePhoneAlreadyHasAReservationThatDay_isRejectedWith409() {
         OffsetDateTime startsAt = tomorrowEvening();
         Customer existing = Customer.builder().id(UUID.randomUUID()).restaurantId(restaurantId)
-                .phone("0612345678").firstName("Nadia").build();
+                .phone("+33612345678").firstName("Nadia").build();
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
         when(reservationService.slotsFor(any(), any(), anyInt(), eq(2), any(), any())).thenReturn(slotsWith(startsAt));
-        when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "0612345678")).thenReturn(Optional.of(existing));
+        when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "+33612345678")).thenReturn(Optional.of(existing));
         when(customerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
         when(reservationRepository.countActiveByCustomerBetween(eq(restaurantId), eq(existing.getId()), any(), any()))
                 .thenReturn(1L);
@@ -248,9 +248,19 @@ class PublicBookingServiceTest {
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
         LocalDate from = LocalDate.now(ZoneId.of("Europe/Paris")).plusDays(2);
         RescheduleSlotsResponse expected = new RescheduleSlotsResponse(List.of());
-        when(reservationService.slotsFor(restaurant, from, 4, BookingPolicy.DEFAULT_DURATION, null)).thenReturn(expected);
+        when(reservationService.slotsFor(restaurant, from, 5, 4, BookingPolicy.DEFAULT_DURATION, null)).thenReturn(expected);
 
         assertThat(service.slots(restaurantId, from, 4)).isSameAs(expected);
+    }
+
+    @Test
+    void slots_fromTheLastBookableDay_neverGoBeyondTheWindow() {
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
+        LocalDate lastDay = LocalDate.now(ZoneId.of("Europe/Paris")).plusDays(BookingPolicy.WINDOW_DAYS - 1);
+        RescheduleSlotsResponse expected = new RescheduleSlotsResponse(List.of());
+        when(reservationService.slotsFor(restaurant, lastDay, 1, 2, BookingPolicy.DEFAULT_DURATION, null)).thenReturn(expected);
+
+        assertThat(service.slots(restaurantId, lastDay, 2)).isSameAs(expected);
     }
 
     // --- replanification depuis le lien du message
@@ -282,6 +292,19 @@ class PublicBookingServiceTest {
         assertThat(existing.getNotes()).isEqualTo("Poussette");
         assertThat(response.partySize()).isEqualTo(3);
         verify(events).publishEvent(any(ReservationUpdatedEvent.class));
+    }
+
+    @Test
+    void reschedule_ofAPastReservation_isRefused() {
+        Reservation past = existingReservation("pending");
+        past.setStartsAt(OffsetDateTime.now().minusDays(3));
+        past.setEndsAt(past.getStartsAt().plusMinutes(90));
+        when(reservationRepository.findById(past.getId())).thenReturn(Optional.of(past));
+
+        assertThatThrownBy(() -> service.reschedule(past.getId(),
+                new PublicRescheduleRequest(tomorrowEvening(), 2, null)))
+                .isInstanceOf(BookingException.class)
+                .satisfies(e -> assertThat(((BookingException) e).getCode()).isEqualTo("not_reschedulable"));
     }
 
     @Test
