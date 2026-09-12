@@ -122,8 +122,8 @@ public class PublicBookingService {
 
     /** Creneaux pour deplacer sa reservation : la duree d'origine, la reservation exclue des tables occupees. */
     @Transactional(readOnly = true)
-    public RescheduleSlotsResponse rescheduleSlots(UUID reservationId, Integer partySize) {
-        Reservation reservation = requireReschedulable(reservationId);
+    public RescheduleSlotsResponse rescheduleSlots(UUID token, Integer partySize) {
+        Reservation reservation = requireReschedulable(token);
         int size = partySize != null ? partySize : reservation.getPartySize();
         requirePartySize(size);
         return reservationService.rescheduleSlots(reservation.getId(), null, size);
@@ -134,8 +134,8 @@ public class PublicBookingService {
      * seul un creneau propose est accepte : table et heure de fin viennent de lui. Le nom du
      * client n'est pas modifiable ici, la route est anonyme.
      */
-    public PublicReservationResponse reschedule(UUID reservationId, PublicRescheduleRequest request) {
-        Reservation reservation = requireReschedulable(reservationId);
+    public PublicReservationResponse reschedule(UUID token, PublicRescheduleRequest request) {
+        Reservation reservation = requireReschedulable(token);
         Restaurant restaurant = requireRestaurant(reservation.getRestaurantId());
         requirePartySize(request.partySize());
         reservationRepository.lockRestaurant(reservation.getRestaurantId());
@@ -185,9 +185,8 @@ public class PublicBookingService {
     }
 
     /** Une reservation annulee ou deja passee ne se deplace plus. */
-    private Reservation requireReschedulable(UUID reservationId) {
-        Reservation reservation = reservationRepository.findById(reservationId)
-                .orElseThrow(() -> new ResourceNotFoundException("Reservation", reservationId));
+    private Reservation requireReschedulable(UUID token) {
+        Reservation reservation = findByToken(token);
         boolean past = reservation.getStartsAt() != null && reservation.getStartsAt().isBefore(OffsetDateTime.now());
         if (past || !List.of("pending", "confirmed").contains(reservation.getStatus())) {
             throw new BookingException(HttpStatus.CONFLICT, "not_reschedulable",
@@ -197,9 +196,8 @@ public class PublicBookingService {
     }
 
     @Transactional(readOnly = true)
-    public PublicReservationResponse get(UUID reservationId) {
-        Reservation reservation = reservationRepository.findById(reservationId)
-                .orElseThrow(() -> new ResourceNotFoundException("Reservation", reservationId));
+    public PublicReservationResponse get(UUID token) {
+        Reservation reservation = findByToken(token);
         Restaurant restaurant = requireRestaurant(reservation.getRestaurantId());
         Customer customer = reservation.getCustomerId() == null ? null
                 : customerRepository.findById(reservation.getCustomerId()).orElse(null);
@@ -266,8 +264,15 @@ public class PublicBookingService {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
+    /** Le public ne connait la reservation que par son jeton : jamais par son identifiant interne. */
+    private Reservation findByToken(UUID token) {
+        return reservationRepository.findByPublicToken(token)
+                .orElseThrow(() -> new ResourceNotFoundException("Reservation", token));
+    }
+
+    /** Le champ « id » de la vue publique est le jeton : c'est lui que le client garde dans ses liens. */
     private static PublicReservationResponse toResponse(Reservation r, Restaurant restaurant, Customer customer) {
-        return new PublicReservationResponse(r.getId(), restaurant.getId(), restaurant.getName(),
+        return new PublicReservationResponse(r.getPublicToken(), restaurant.getId(), restaurant.getName(),
                 r.getStartsAt(), r.getEndsAt(), r.getPartySize(), r.getStatus(),
                 displayName(customer));
     }

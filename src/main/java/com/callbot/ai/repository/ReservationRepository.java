@@ -30,6 +30,8 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
 
     Optional<Reservation> findByCallId(UUID callId);
 
+    Optional<Reservation> findByPublicToken(UUID publicToken);
+
     /**
      * Toutes les tables occupées sur la plage — y compris celles des
      * réservations réparties sur plusieurs tables (jointure sur la table de
