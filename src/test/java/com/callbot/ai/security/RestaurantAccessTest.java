@@ -78,4 +78,23 @@ class RestaurantAccessTest {
         assertThatThrownBy(() -> access.requireOwned(restaurantId, authentication))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
+
+    @Test
+    void requireOrganization_acceptsOnlyTheUsersOrganization() {
+        authenticatedAs(organizationId);
+        access.requireOrganization(organizationId, authentication);
+        assertThatThrownBy(() -> access.requireOrganization(UUID.randomUUID(), authentication))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        assertThatThrownBy(() -> access.requireOrganization(null, authentication))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+    }
+
+    @Test
+    void ownedRestaurantIds_listsOnlyTheUsersRestaurants() {
+        authenticatedAs(organizationId);
+        Restaurant mine = Restaurant.builder().id(restaurantId).organizationId(organizationId).name("Mine").build();
+        when(restaurantRepository.findByOrganizationId(organizationId)).thenReturn(java.util.List.of(mine));
+
+        assertThat(access.ownedRestaurantIds(authentication)).containsExactly(restaurantId);
+    }
 }
