@@ -276,14 +276,14 @@ class PublicBookingServiceTest {
     void reschedule_onProposedSlot_movesTheReservationAndNotifies() {
         Reservation existing = existingReservation("pending");
         OffsetDateTime newStart = existing.getStartsAt().plusHours(1);
-        when(reservationRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(reservationRepository.findByPublicToken(existing.getPublicToken())).thenReturn(Optional.of(existing));
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
         when(reservationService.slotsFor(eq(restaurant), eq(newStart.toLocalDate()), eq(1), eq(3),
                 eq(Duration.ofMinutes(90)), eq(existing.getId()))).thenReturn(slotsWith(newStart));
         when(reservationRepository.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
         when(customerRepository.findById(existing.getCustomerId())).thenReturn(Optional.empty());
 
-        PublicReservationResponse response = service.reschedule(existing.getId(),
+        PublicReservationResponse response = service.reschedule(existing.getPublicToken(),
                 new PublicRescheduleRequest(newStart, 3, "Poussette"));
 
         assertThat(existing.getStartsAt()).isEqualTo(newStart);
@@ -299,9 +299,9 @@ class PublicBookingServiceTest {
         Reservation past = existingReservation("pending");
         past.setStartsAt(OffsetDateTime.now().minusDays(3));
         past.setEndsAt(past.getStartsAt().plusMinutes(90));
-        when(reservationRepository.findById(past.getId())).thenReturn(Optional.of(past));
+        when(reservationRepository.findByPublicToken(past.getPublicToken())).thenReturn(Optional.of(past));
 
-        assertThatThrownBy(() -> service.reschedule(past.getId(),
+        assertThatThrownBy(() -> service.reschedule(past.getPublicToken(),
                 new PublicRescheduleRequest(tomorrowEvening(), 2, null)))
                 .isInstanceOf(BookingException.class)
                 .satisfies(e -> assertThat(((BookingException) e).getCode()).isEqualTo("not_reschedulable"));
@@ -310,13 +310,13 @@ class PublicBookingServiceTest {
     @Test
     void reschedule_ofACancelledReservation_isRefused() {
         Reservation cancelled = existingReservation("cancelled");
-        when(reservationRepository.findById(cancelled.getId())).thenReturn(Optional.of(cancelled));
+        when(reservationRepository.findByPublicToken(cancelled.getPublicToken())).thenReturn(Optional.of(cancelled));
 
-        assertThatThrownBy(() -> service.reschedule(cancelled.getId(),
+        assertThatThrownBy(() -> service.reschedule(cancelled.getPublicToken(),
                 new PublicRescheduleRequest(tomorrowEvening(), 2, null)))
                 .isInstanceOf(BookingException.class)
                 .satisfies(e -> assertThat(((BookingException) e).getCode()).isEqualTo("not_reschedulable"));
-        assertThatThrownBy(() -> service.rescheduleSlots(cancelled.getId(), null))
+        assertThatThrownBy(() -> service.rescheduleSlots(cancelled.getPublicToken(), null))
                 .isInstanceOf(BookingException.class);
     }
 
@@ -324,12 +324,12 @@ class PublicBookingServiceTest {
     void reschedule_offTheProposedSlots_is409_andLeavesTheReservationUntouched() {
         Reservation existing = existingReservation("confirmed");
         OffsetDateTime original = existing.getStartsAt();
-        when(reservationRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(reservationRepository.findByPublicToken(existing.getPublicToken())).thenReturn(Optional.of(existing));
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
         when(reservationService.slotsFor(any(), any(), anyInt(), anyInt(), any(), any()))
                 .thenReturn(slotsWith(original.plusHours(2)));
 
-        assertThatThrownBy(() -> service.reschedule(existing.getId(),
+        assertThatThrownBy(() -> service.reschedule(existing.getPublicToken(),
                 new PublicRescheduleRequest(original.plusHours(1), 2, null)))
                 .isInstanceOf(BookingException.class)
                 .satisfies(e -> assertThat(((BookingException) e).getCode()).isEqualTo("no_table"));
@@ -340,10 +340,10 @@ class PublicBookingServiceTest {
     @Test
     void rescheduleSlots_excludeTheReservationItself_withItsOwnDuration() {
         Reservation existing = existingReservation("pending");
-        when(reservationRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(reservationRepository.findByPublicToken(existing.getPublicToken())).thenReturn(Optional.of(existing));
         RescheduleSlotsResponse expected = new RescheduleSlotsResponse(List.of());
         when(reservationService.rescheduleSlots(existing.getId(), null, 4)).thenReturn(expected);
 
-        assertThat(service.rescheduleSlots(existing.getId(), 4)).isSameAs(expected);
+        assertThat(service.rescheduleSlots(existing.getPublicToken(), 4)).isSameAs(expected);
     }
 }

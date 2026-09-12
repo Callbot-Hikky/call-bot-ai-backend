@@ -159,7 +159,7 @@ public class ReservationMessageTemplates {
     }
 
     private String buildRescheduleLink(Reservation reservation) {
-        return baseUrl() + "/client/reservations/" + reservation.getId() + "/reschedule";
+        return baseUrl() + "/client/reservations/" + reservation.getPublicToken() + "/reschedule";
     }
 
     /**
@@ -175,7 +175,7 @@ public class ReservationMessageTemplates {
             return "";
         }
         return "\n-# Envie de découvrir la carte ? [Voir le menu](" + baseUrl()
-                + "/client/restaurants/" + restaurant.getId() + "/menu?reservation=" + reservation.getId() + ")\n";
+                + "/client/restaurants/" + restaurant.getId() + "/menu?reservation=" + reservation.getPublicToken() + ")\n";
     }
 
     private String baseUrl() {

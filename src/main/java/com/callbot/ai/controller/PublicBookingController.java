@@ -50,20 +50,21 @@ public class PublicBookingController {
         return bookingService.create(restaurantId, request);
     }
 
-    @GetMapping("/reservations/{id}")
-    public PublicReservationResponse get(@PathVariable UUID id) {
-        return bookingService.get(id);
+    // {token} est le jeton public recu dans le message de confirmation, pas l'identifiant interne.
+    @GetMapping("/reservations/{token}")
+    public PublicReservationResponse get(@PathVariable UUID token) {
+        return bookingService.get(token);
     }
 
-    @GetMapping("/reservations/{id}/slots")
-    public RescheduleSlotsResponse rescheduleSlots(@PathVariable UUID id,
+    @GetMapping("/reservations/{token}/slots")
+    public RescheduleSlotsResponse rescheduleSlots(@PathVariable UUID token,
             @RequestParam(required = false) Integer partySize) {
-        return bookingService.rescheduleSlots(id, partySize);
+        return bookingService.rescheduleSlots(token, partySize);
     }
 
-    @PutMapping("/reservations/{id}")
-    public PublicReservationResponse reschedule(@PathVariable UUID id,
+    @PutMapping("/reservations/{token}")
+    public PublicReservationResponse reschedule(@PathVariable UUID token,
             @Valid @RequestBody PublicRescheduleRequest request) {
-        return bookingService.reschedule(id, request);
+        return bookingService.reschedule(token, request);
     }
 }
