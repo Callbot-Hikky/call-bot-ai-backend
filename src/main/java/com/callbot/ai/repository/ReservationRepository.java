@@ -1,6 +1,7 @@
 package com.callbot.ai.repository;
 
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -14,6 +15,16 @@ import com.callbot.ai.model.Reservation;
 public interface ReservationRepository extends JpaRepository<Reservation, UUID> {
 
     List<Reservation> findByRestaurantId(UUID restaurantId);
+
+    List<Reservation> findByRestaurantIdIn(Collection<UUID> restaurantIds);
+
+    /**
+     * Verrou transactionnel par restaurant : deux reservations ecrites au meme instant sur des
+     * tables secondaires ne se voient pas l'une l'autre sous READ COMMITTED, le trigger differe
+     * de V16 ne suffit donc pas. Libere avec la transaction.
+     */
+    @Query(value = "select pg_advisory_xact_lock(hashtext('reservations:' || cast(:restaurantId as text))) is null", nativeQuery = true)
+    boolean lockRestaurant(@Param("restaurantId") UUID restaurantId);
 
     List<Reservation> findByCustomerId(UUID customerId);
 

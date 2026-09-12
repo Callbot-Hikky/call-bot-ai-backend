@@ -55,6 +55,7 @@ public class ReservationService {
 
     public ReservationResponse create(ReservationRequest request) {
         requireRestaurant(request.restaurantId());
+        reservationRepository.lockRestaurant(request.restaurantId());
         Reservation reservation = Reservation.builder()
                 .restaurantId(request.restaurantId())
                 .customerId(request.customerId())
@@ -75,6 +76,16 @@ public class ReservationService {
         return ReservationResponse.from(saved);
     }
 
+    /** Les restaurants de l'organisation seulement : le filtre est en base, pas en memoire. */
+    @Transactional(readOnly = true)
+    public List<ReservationResponse> listOwned(Set<UUID> restaurantIds, Set<String> expand) {
+        if (restaurantIds.isEmpty()) {
+            return List.of();
+        }
+        return reservationRepository.findByRestaurantIdIn(restaurantIds).stream()
+                .map(r -> toResponse(r, expand)).toList();
+    }
+
     @Transactional(readOnly = true)
     public List<ReservationResponse> list(UUID restaurantId, Set<String> expand) {
         List<Reservation> reservations = restaurantId != null
@@ -90,6 +101,7 @@ public class ReservationService {
 
     public ReservationResponse update(UUID id, ReservationRequest request, boolean notify) {
         Reservation reservation = find(id);
+        reservationRepository.lockRestaurant(reservation.getRestaurantId());
         reservation.setCustomerId(request.customerId());
         reservation.setTableId(request.tableId());
         reservation.setTableIds(singleOrEmpty(request.tableId()));
