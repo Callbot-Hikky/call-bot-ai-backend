@@ -22,6 +22,8 @@ import com.callbot.ai.dto.RestaurantResponse;
 import com.callbot.ai.service.RestaurantService;
 
 import jakarta.validation.Valid;
+import org.springframework.security.core.Authentication;
+import com.callbot.ai.security.RestaurantAccess;
 import lombok.RequiredArgsConstructor;
 
 @RestController
@@ -30,36 +32,47 @@ import lombok.RequiredArgsConstructor;
 public class RestaurantController {
 
     private final RestaurantService restaurantService;
+    private final RestaurantAccess restaurantAccess;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public RestaurantResponse create(@Valid @RequestBody RestaurantRequest request) {
+    public RestaurantResponse create(@Valid @RequestBody RestaurantRequest request, Authentication authentication) {
+        restaurantAccess.requireOrganization(request.organizationId(), authentication);
         return restaurantService.create(request);
     }
 
     @GetMapping
-    public List<RestaurantResponse> list(@RequestParam(required = false) UUID organizationId) {
-        return restaurantService.list(organizationId);
+    public List<RestaurantResponse> list(@RequestParam(required = false) UUID organizationId,
+            Authentication authentication) {
+        // Toujours l'organisation de l'utilisateur : le parametre ne sert qu'a la compatibilite.
+        return restaurantService.list(restaurantAccess.organizationOf(authentication));
     }
 
     @GetMapping("/{id}")
-    public RestaurantResponse get(@PathVariable UUID id) {
+    public RestaurantResponse get(@PathVariable UUID id, Authentication authentication) {
+        restaurantAccess.requireOwned(id, authentication);
         return restaurantService.get(id);
     }
 
     @PutMapping("/{id}")
-    public RestaurantResponse update(@PathVariable UUID id, @Valid @RequestBody RestaurantRequest request) {
+    public RestaurantResponse update(@PathVariable UUID id, @Valid @RequestBody RestaurantRequest request,
+            Authentication authentication) {
+        restaurantAccess.requireOwned(id, authentication);
+        restaurantAccess.requireOrganization(request.organizationId(), authentication);
         return restaurantService.update(id, request);
     }
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable UUID id) {
+    public void delete(@PathVariable UUID id, Authentication authentication) {
+        restaurantAccess.requireOwned(id, authentication);
         restaurantService.delete(id);
     }
 
     @PatchMapping("/{id}/attributes")
-    public RestaurantResponse updateAttributes(@PathVariable UUID id, @RequestBody Map<String, Object> attributes) {
+    public RestaurantResponse updateAttributes(@PathVariable UUID id, @RequestBody Map<String, Object> attributes,
+            Authentication authentication) {
+        restaurantAccess.requireOwned(id, authentication);
         return restaurantService.updateAttributes(id, attributes);
     }
 }

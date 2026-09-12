@@ -111,8 +111,7 @@ class CallContextIntegrationTest extends AbstractIntegrationTest {
     /** Creates an organization, a restaurant with attributes and one table. */
     private String seedRestaurantWithTable(String phone, String ownerEmail, int capacity) throws Exception {
         String token = registerAndGetToken(ownerEmail);
-        UUID organizationId = organizationRepository.save(
-                Organization.builder().name("Context Org").build()).getId();
+        UUID organizationId = organizationOf(token);
 
         String restaurant = mockMvc.perform(post("/api/restaurants")
                 .header("Authorization", "Bearer " + token)
@@ -143,5 +142,13 @@ class CallContextIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         return JsonPath.read(response, "$.accessToken");
+    }
+
+    /** L'organisation creee a l'inscription : la seule sur laquelle l'utilisateur peut agir. */
+    private UUID organizationOf(String token) throws Exception {
+        String me = mockMvc.perform(get("/api/me").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return UUID.fromString(JsonPath.read(me, "$.organizationId"));
     }
 }
