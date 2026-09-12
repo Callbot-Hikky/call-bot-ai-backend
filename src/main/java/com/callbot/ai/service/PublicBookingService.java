@@ -3,6 +3,7 @@ package com.callbot.ai.service;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashSet;
 import java.util.Optional;
 import java.util.Set;
@@ -63,12 +64,15 @@ public class PublicBookingService {
             throw new BookingException(HttpStatus.BAD_REQUEST, "date_out_of_window",
                     "fromDate must be within the next " + BookingPolicy.WINDOW_DAYS + " days");
         }
-        return reservationService.slotsFor(restaurant, from, partySize, BookingPolicy.DEFAULT_DURATION, null);
+        // Depuis J+3, il ne reste que 4 jours a proposer : jamais un creneau que create() refuserait.
+        int dayCount = (int) (ChronoUnit.DAYS.between(from, lastBookableDay(today)) + 1);
+        return reservationService.slotsFor(restaurant, from, dayCount, partySize, BookingPolicy.DEFAULT_DURATION, null);
     }
 
     public PublicReservationResponse create(UUID restaurantId, PublicReservationRequest request) {
         Restaurant restaurant = requireRestaurant(restaurantId);
         requirePartySize(request.partySize());
+        reservationRepository.lockRestaurant(restaurantId);
         ZoneId zone = ZoneId.of(restaurant.getTimezone());
         OffsetDateTime now = OffsetDateTime.now(zone);
         LocalDate day = request.startsAt().atZoneSameInstant(zone).toLocalDate();
@@ -134,6 +138,7 @@ public class PublicBookingService {
         Reservation reservation = requireReschedulable(reservationId);
         Restaurant restaurant = requireRestaurant(reservation.getRestaurantId());
         requirePartySize(request.partySize());
+        reservationRepository.lockRestaurant(reservation.getRestaurantId());
         ZoneId zone = ZoneId.of(restaurant.getTimezone());
         OffsetDateTime now = OffsetDateTime.now(zone);
         LocalDate day = request.startsAt().atZoneSameInstant(zone).toLocalDate();
@@ -142,7 +147,14 @@ public class PublicBookingService {
             throw new BookingException(HttpStatus.BAD_REQUEST, "slot_out_of_window",
                     "The slot must be in the next " + BookingPolicy.WINDOW_DAYS + " days");
         }
-        Duration duration = Duration.between(reservation.getStartsAt(), reservation.getEndsAt());
+        Duration duration = reservation.getEndsAt() != null
+                ? Duration.between(reservation.getStartsAt(), reservation.getEndsAt())
+                : BookingPolicy.DEFAULT_DURATION;
+        Customer current = reservation.getCustomerId() == null ? null
+                : customerRepository.findById(reservation.getCustomerId()).orElse(null);
+        if (current != null) {
+            requireNoOtherReservationThatDay(restaurant, current, day, zone, reservation);
+        }
         RescheduleSlotsResponse.Slot slot = reservationService
                 .slotsFor(restaurant, day, 1, request.partySize(), duration, reservation.getId())
                 .days().stream()
@@ -176,7 +188,8 @@ public class PublicBookingService {
     private Reservation requireReschedulable(UUID reservationId) {
         Reservation reservation = reservationRepository.findById(reservationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Reservation", reservationId));
-        if (!List.of("pending", "confirmed").contains(reservation.getStatus())) {
+        boolean past = reservation.getStartsAt() != null && reservation.getStartsAt().isBefore(OffsetDateTime.now());
+        if (past || !List.of("pending", "confirmed").contains(reservation.getStatus())) {
             throw new BookingException(HttpStatus.CONFLICT, "not_reschedulable",
                     "This reservation can no longer be moved");
         }
@@ -211,12 +224,22 @@ public class PublicBookingService {
 
     /** Un meme numero ne remplit pas le carnet : une reservation active par jour et par restaurant. */
     private void requireNoOtherReservationThatDay(Restaurant restaurant, Customer customer, LocalDate day, ZoneId zone) {
+        requireNoOtherReservationThatDay(restaurant, customer, day, zone, null);
+    }
+
+    /** En replanification, la reservation deplacee ne compte pas contre elle-meme. */
+    private void requireNoOtherReservationThatDay(Restaurant restaurant, Customer customer, LocalDate day, ZoneId zone,
+            Reservation self) {
         if (customer.getId() == null) {
             return;
         }
         OffsetDateTime from = day.atStartOfDay(zone).toOffsetDateTime();
         OffsetDateTime to = day.plusDays(1).atStartOfDay(zone).toOffsetDateTime();
         long active = reservationRepository.countActiveByCustomerBetween(restaurant.getId(), customer.getId(), from, to);
+        if (self != null && self.getStartsAt() != null
+                && !self.getStartsAt().isBefore(from) && self.getStartsAt().isBefore(to)) {
+            active--;
+        }
         if (active >= BookingPolicy.MAX_ACTIVE_PER_DAY) {
             throw new BookingException(HttpStatus.CONFLICT, "already_booked",
                     "This phone number already has a reservation that day");
