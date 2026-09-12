@@ -1,6 +1,7 @@
 package com.callbot.ai.service;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
@@ -61,6 +62,13 @@ public class CustomerService {
     }
 
     @Transactional(readOnly = true)
+    public List<CustomerResponse> listOwned(Set<UUID> restaurantIds) {
+        if (restaurantIds.isEmpty()) {
+            return List.of();
+        }
+        return customerRepository.findByRestaurantIdIn(restaurantIds).stream().map(CustomerResponse::from).toList();
+    }
+
     public List<CustomerResponse> list(UUID restaurantId) {
         List<Customer> customers = restaurantId != null
                 ? customerRepository.findByRestaurantId(restaurantId)

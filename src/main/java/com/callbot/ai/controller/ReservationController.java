@@ -52,10 +52,7 @@ public class ReservationController {
             restaurantAccess.requireOwned(restaurantId, authentication);
             return reservationService.list(restaurantId, parseExpand(expand));
         }
-        Set<UUID> owned = restaurantAccess.ownedRestaurantIds(authentication);
-        return reservationService.list(null, parseExpand(expand)).stream()
-                .filter(r -> owned.contains(r.restaurantId()))
-                .toList();
+        return reservationService.listOwned(restaurantAccess.ownedRestaurantIds(authentication), parseExpand(expand));
     }
 
     @GetMapping("/{id}")
