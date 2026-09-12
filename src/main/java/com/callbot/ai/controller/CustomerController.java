@@ -54,8 +54,7 @@ public class CustomerController {
             restaurantAccess.requireOwned(restaurantId, authentication);
             return customerService.list(restaurantId);
         }
-        Set<UUID> owned = restaurantAccess.ownedRestaurantIds(authentication);
-        return customerService.list(null).stream().filter(c -> owned.contains(c.restaurantId())).toList();
+        return customerService.listOwned(restaurantAccess.ownedRestaurantIds(authentication));
     }
 
     @GetMapping("/{id}")
