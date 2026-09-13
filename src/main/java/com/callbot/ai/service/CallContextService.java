@@ -86,11 +86,22 @@ public class CallContextService {
             OffsetDateTime endsAt, int partySize) {
         Restaurant restaurant = findByPhone(restaurantPhone);
         OffsetDateTime end = endsAt != null ? endsAt : startsAt.plus(DEFAULT_DURATION);
+        if (endsAt != null) {
+            SlotRules.requireValidRange(startsAt, endsAt);
+        }
         Duration duration = Duration.between(startsAt, end);
 
         // Plafond métier : au-delà de 15, l'assistant ne prend pas la réservation.
         if (partySize > MAX_PARTY_SIZE) {
             return new AvailabilityResponse(false, "party_too_large", null, List.of(),
+                    startsAt, end, partySize, List.of());
+        }
+
+        // Past or beyond the window: a plain "no", alternatives make no sense at that date.
+        ZoneId zone = ZoneId.of(restaurant.getTimezone());
+        String outOfTime = SlotRules.refusalReason(zone, OffsetDateTime.now(zone), startsAt);
+        if (outOfTime != null) {
+            return new AvailabilityResponse(false, outOfTime, null, List.of(),
                     startsAt, end, partySize, List.of());
         }
 

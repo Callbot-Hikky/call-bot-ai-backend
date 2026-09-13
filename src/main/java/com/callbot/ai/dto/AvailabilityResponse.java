@@ -7,7 +7,7 @@ import java.util.UUID;
 /** Live answer to "do you have a table at this time?", asked during a call. */
 public record AvailabilityResponse(
         boolean available,
-        // "closed", "no_table" or "party_too_large"; null when available.
+        // "closed", "no_table", "party_too_large", "past" or "too_far"; null when available.
         String reason,
         // Table principale = première des tables retenues (compat mono-table).
         UUID tableId,

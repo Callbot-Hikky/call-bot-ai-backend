@@ -192,10 +192,19 @@ grandes, et les réservations qui chevauchent le créneau.
 }
 ```
 
-`reason` vaut `"closed"` (hors horaires) ou `"no_table"`. Le champ
-`alternatives` est essentiel : il permet au bot de **contre-proposer** un créneau
-au lieu de simplement refuser. La plus petite table capable d'accueillir le
-groupe est choisie en priorité, pour garder les grandes tables libres.
+`reason` vaut `"closed"` (hors horaires), `"no_table"`, `"party_too_large"`
+(plus de 15 couverts), `"past"` (créneau déjà passé, avec 5 min de tolérance) ou
+`"too_far"` (au-delà de la fenêtre de 7 jours partagée avec la réservation en
+ligne). Le champ `alternatives` est essentiel : il permet au bot de
+**contre-proposer** un créneau au lieu de simplement refuser. La plus petite
+table capable d'accueillir le groupe est choisie en priorité, pour garder les
+grandes tables libres.
+
+Une plage incohérente (`endsAt` avant `startsAt`, durée hors de 30 min à 4 h)
+n'est pas un « non » mais une requête mal formée : `400` avec le code
+`invalid_range` ou `invalid_duration`. L'ingestion applique les mêmes règles
+et répond `400 slot_in_past` / `slot_out_of_window`, sauf pour le rejeu d'un
+appel déjà ingéré, qui reste idempotent même si le créneau est passé entre-temps.
 
 #### Ingestion de l'appel
 
