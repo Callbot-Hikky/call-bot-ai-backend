@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.callbot.ai.dto.ApiError;
+import com.callbot.ai.dto.SlotTakenError;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -52,19 +53,23 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiError> handleDataIntegrity(DataIntegrityViolationException ex) {
-        Throwable cause = ex.getMostSpecificCause();
-        String detail = cause.getMessage() == null ? "" : cause.getMessage().toLowerCase();
-
         String code = "conflict";
         String message = "The request conflicts with an existing resource";
-        if (detail.contains("no_overlapping_reservation")) {
+        if (DatabaseConstraints.violates(ex, DatabaseConstraints.NO_OVERLAPPING_RESERVATION)) {
             code = "table_overlap";
             message = "This table is already booked for that time slot";
-        } else if (detail.contains("uq_customers_restaurant_phone")) {
+        } else if (DatabaseConstraints.violates(ex, DatabaseConstraints.UNIQUE_CUSTOMER_PHONE)) {
             code = "duplicate_phone";
             message = "A customer already exists with this phone number";
         }
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiError.of(HttpStatus.CONFLICT.value(), code, message));
+    }
+
+    /** Same 409 as a plain overlap, enriched with the slots the AI can offer instead. */
+    @ExceptionHandler(SlotTakenException.class)
+    public ResponseEntity<SlotTakenError> handleSlotTaken(SlotTakenException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(SlotTakenError.of(ex.getMessage(), ex.getAlternatives()));
     }
 }

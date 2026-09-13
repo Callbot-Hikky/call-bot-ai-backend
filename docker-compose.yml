@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: callbot-postgres
     restart: unless-stopped
     environment:
@@ -37,6 +37,7 @@ services:
       DISCORD_WEBHOOK_CLIENT: ${DISCORD_WEBHOOK_CLIENT:-}
       DISCORD_WEBHOOK_RESTAURANT: ${DISCORD_WEBHOOK_RESTAURANT:-}
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
     ports:
       - "${SERVER_PORT:-8080}:8080"
 

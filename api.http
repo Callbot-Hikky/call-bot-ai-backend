@@ -5,7 +5,7 @@
 ### Les ids sont chaînés automatiquement (createRestaurant -> createTable -> ...),
 ### donc envoie les requêtes "create" dans l'ordre avant de tester list/get/update/delete.
 
-@host = http://localhost:8080
+@host = http://localhost:8080u
 
 ### Ping (public, pas de token)
 GET {{host}}/api/ping

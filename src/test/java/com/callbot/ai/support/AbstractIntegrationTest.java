@@ -20,8 +20,10 @@ import org.testcontainers.utility.DockerImageName;
 @AutoConfigureMockMvc
 public abstract class AbstractIntegrationTest {
 
-    static final PostgreSQLContainer POSTGRES =
-            new PostgreSQLContainer(DockerImageName.parse("postgres:16-alpine"));
+    // pgvector image (PostgreSQL 16 + the "vector" extension used by the knowledge base).
+    // asCompatibleSubstituteFor tells Testcontainers to drive it like a stock postgres image.
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer(
+            DockerImageName.parse("pgvector/pgvector:pg16").asCompatibleSubstituteFor("postgres"));
 
     static {
         POSTGRES.start();

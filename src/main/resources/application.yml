@@ -36,6 +36,11 @@ app:
     webhook-restaurant: ${DISCORD_WEBHOOK_RESTAURANT:}
   frontend:
     base-url: ${FRONTEND_BASE_URL:}
+  embedding:
+    # Voyage AI key for the knowledge base. Empty = offline fake embeddings.
+    api-key: ${VOYAGE_API_KEY:}
+    model: voyage-4-lite
+    dimension: 1024
 
 management:
   endpoints:

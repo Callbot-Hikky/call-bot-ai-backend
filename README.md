@@ -9,7 +9,7 @@ utilisateurs, clé d'API de service pour l'IA.
 
 - **Java 21** (LTS)
 - **Spring Boot 4.1** — Web (MVC), Data JPA, Validation, Actuator, Security
-- **PostgreSQL 16**
+- **PostgreSQL 16** avec l'extension **pgvector** (image `pgvector/pgvector:pg16`)
 - **Flyway** pour les migrations de base de données
 - **JWT** (jjwt) pour l'authentification stateless, mots de passe hashés en **BCrypt**
 - **Maven** (via wrapper `./mvnw`)
@@ -209,7 +209,7 @@ Appel terminé (bot IA)
 1. Retrouve le restaurant via restaurantPhone (numéro appelé)   ── inconnu ─▶ 404
 2. Retrouve ou crée le client (clé : restaurant + téléphone)
 3. Enregistre l'appel (idempotent sur twilioCallSid)
-4. Crée la réservation (source = "callbot")
+4. Crée la réservation (source = "callbot")          ── table prise ─▶ 409
         ▼
 201 { callId, customerId, reservation, alreadyProcessed }
 ```
@@ -217,6 +217,24 @@ Appel terminé (bot IA)
 **Idempotence** : si le même appel (`twilioCallSid`) est renvoyé, rien n'est
 recréé — la réservation existante est renvoyée avec `alreadyProcessed = true`.
 Cela protège contre les doublons en cas de renvoi réseau.
+
+**Table prise entre-temps** : la vérification de disponibilité ne pose aucun
+verrou. Si une autre réservation prend la table entre `/availability` et
+`/ingest`, la contrainte `no_overlapping_reservation` de PostgreSQL refuse
+l'insertion et le backend répond `409` avec des créneaux de repli, pour que
+l'IA puisse contre-proposer au lieu d'échouer :
+
+```json
+{
+  "status": 409,
+  "error": "table_overlap",
+  "message": "This table is already booked for that time slot",
+  "alternatives": [
+    { "startsAt": "2030-03-01T21:00:00Z", "endsAt": "2030-03-01T23:00:00Z",
+      "tableId": "…", "capacity": 4 }
+  ]
+}
+```
 
 Exemple de payload envoyé par l'IA :
 
@@ -235,6 +253,36 @@ Exemple de payload envoyé par l'IA :
 }
 ```
 
+### Base de connaissances (en cours)
+
+Les attributs JSONB de `restaurants.attributes` couvrent les faits à clé fixe
+(halal, terrasse…). Pour les questions imprévisibles sur du **texte libre**
+(carte, allergènes, politique d'annulation, accès), chaque paragraphe est stocké
+dans `knowledge_base_entries` avec son **embedding** et retrouvé par similarité
+pendant l'appel.
+
+**Contrat figé entre le backend et le bot IA :**
+
+```
+Embeddings : voyage-4-lite, 1024 dimensions, input_type document/query, similarité cosinus.
+Le backend calcule tous les vecteurs ; le microservice IA n'échange que du texte.
+```
+
+| Méthode | Endpoint                          | Auth      | Description                                                | Statut  |
+|---------|-----------------------------------|-----------|------------------------------------------------------------|---------|
+| `POST`  | `/api/knowledge`                  | Bearer    | Crée une entrée (titre, contenu, source)                   | à faire |
+| `PUT`   | `/api/knowledge/{id}`             | Bearer    | Modifie une entrée (ré-embedding automatique)              | à faire |
+| `DELETE`| `/api/knowledge/{id}`             | Bearer    | Supprime une entrée                                        | à faire |
+| `GET`   | `/api/calls/knowledge`            | X-Api-Key | `restaurantPhone` + `question` → 3 passages les plus proches, avec score | à faire |
+
+Réponse de recherche : `[{ id, title, content, score }]`, `score` entre 0 et 1
+(1 = identique). À terme, `POST /api/calls/ingest` acceptera `unansweredQuestions`
+pour remonter au restaurateur ce que le bot n'a pas su répondre.
+
+Sans `VOYAGE_API_KEY`, le backend utilise un embedding factice déterministe
+(hachage des mots) : suffisant pour les tests et le dev, inutile pour une vraie
+recherche sémantique.
+
 ### Divers
 
 | Méthode | Endpoint           | Auth | Description   |
@@ -244,7 +292,8 @@ Exemple de payload envoyé par l'IA :
 
 Codes d'erreur : `400` validation (avec détail par champ), `401` identifiants
 invalides / token ou clé d'API manquant·e ou invalide, `403` accès interdit,
-`404` ressource introuvable, `409` email déjà utilisé.
+`404` ressource introuvable, `409` conflit (email déjà utilisé, client en doublon,
+table déjà réservée sur le créneau).
 
 ### Exemple
 
@@ -272,6 +321,7 @@ exemples dans `.env.example`) :
 | `JWT_SECRET`                 | valeur de dev                  | Secret de signature (min. 32 octets) |
 | `JWT_EXPIRATION_MS`          | `86400000` (24 h)              | Durée de validité du token           |
 | `SERVER_PORT`                | `8080`                         | Port HTTP                            |
+| `VOYAGE_API_KEY`             | vide                           | Clé Voyage AI pour les embeddings de la base de connaissances. Vide = embeddings factices hors ligne |
 
 > ⚠️ **En production**, remplace impérativement `JWT_SECRET` par une valeur
 > aléatoire longue et garde-la hors du dépôt.
@@ -305,3 +355,7 @@ Le schéma est géré **exclusivement par Flyway** (`ddl-auto: validate` côté 
 Pour modifier le schéma, ajouter un nouveau fichier dans `src/main/resources/db/migration`
 nommé `V<n>__description.sql`. Ne jamais modifier une migration déjà appliquée
 (le checksum ne correspondrait plus et Flyway refuserait de démarrer).
+
+La migration `V10` crée l'extension `vector` : la base doit tourner sur l'image
+`pgvector/pgvector:pg16` (compose, dev et Testcontainers sont déjà configurés).
+Un PostgreSQL standard échouera au démarrage sur cette migration.

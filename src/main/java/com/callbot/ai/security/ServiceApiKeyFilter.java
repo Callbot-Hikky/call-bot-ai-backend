@@ -1,6 +1,8 @@
 package com.callbot.ai.security;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.List;
 
 import org.springframework.lang.NonNull;
@@ -41,7 +43,7 @@ public class ServiceApiKeyFilter extends OncePerRequestFilter {
         String providedKey = request.getHeader(API_KEY_HEADER);
 
         if (StringUtils.hasText(configuredKey)
-                && configuredKey.equals(providedKey)
+                && matches(configuredKey, providedKey)
                 && SecurityContextHolder.getContext().getAuthentication() == null) {
             var authentication = new UsernamePasswordAuthenticationToken(
                     SERVICE_PRINCIPAL, null,
@@ -50,5 +52,19 @@ public class ServiceApiKeyFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    /**
+     * Constant-time comparison. {@link String#equals} returns as soon as a byte
+     * differs, so response times would leak how many leading characters of the
+     * key an attacker has guessed right.
+     */
+    static boolean matches(String configuredKey, String providedKey) {
+        if (providedKey == null) {
+            return false;
+        }
+        return MessageDigest.isEqual(
+                configuredKey.getBytes(StandardCharsets.UTF_8),
+                providedKey.getBytes(StandardCharsets.UTF_8));
     }
 }

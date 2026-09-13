@@ -69,6 +69,48 @@ class CallIngestIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void ingest_whenTableTakenMeanwhile_returns409WithAlternatives() throws Exception {
+        String restaurantPhone = "+33100000052";
+        String tableId = seedRestaurantWithTable("owner-ingest-overlap@example.com", restaurantPhone, 4);
+
+        String payload = """
+                {
+                  "twilioCallSid": "CA-%s",
+                  "restaurantPhone": "%s",
+                  "fromNumber": "%s",
+                  "customer": {"phone": "%s"},
+                  "reservation": {
+                    "tableId": "%s",
+                    "startsAt": "2030-03-02T19:00:00Z",
+                    "endsAt": "2030-03-02T21:00:00Z",
+                    "partySize": 2
+                  }
+                }""";
+
+        // A first caller books the table for 19:00.
+        mockMvc.perform(post("/api/calls/ingest")
+                .header(ServiceApiKeyHeader.NAME, API_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload.formatted(UUID.randomUUID(), restaurantPhone,
+                        "+33622223333", "+33622223333", tableId)))
+                .andExpect(status().isCreated());
+
+        // A second call (different SID, different customer) targets the same
+        // table and slot: the EXCLUDE constraint refuses it, and the API answers
+        // 409 with later slots rather than a bare error.
+        mockMvc.perform(post("/api/calls/ingest")
+                .header(ServiceApiKeyHeader.NAME, API_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(payload.formatted(UUID.randomUUID(), restaurantPhone,
+                        "+33633334444", "+33633334444", tableId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("table_overlap"))
+                .andExpect(jsonPath("$.alternatives").isNotEmpty())
+                .andExpect(jsonPath("$.alternatives[0].startsAt").exists())
+                .andExpect(jsonPath("$.alternatives[0].tableId").value(tableId));
+    }
+
+    @Test
     void ingest_withoutApiKey_isRejected() throws Exception {
         mockMvc.perform(post("/api/calls/ingest")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -105,6 +147,32 @@ class CallIngestIntegrationTest extends AbstractIntegrationTest {
                         {"organizationId":"%s","name":"Ingest Resto","phoneNumber":"%s"}"""
                         .formatted(organizationId, phone)))
                 .andExpect(status().isCreated());
+    }
+
+    /** Seeds a restaurant with a single table and returns that table's id. */
+    private String seedRestaurantWithTable(String ownerEmail, String phone, int capacity) throws Exception {
+        String token = registerAndGetToken(ownerEmail);
+        UUID organizationId = organizationRepository.save(
+                Organization.builder().name("Ingest Org").build()).getId();
+        String restaurant = mockMvc.perform(post("/api/restaurants")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"organizationId":"%s","name":"Ingest Resto","phoneNumber":"%s"}"""
+                        .formatted(organizationId, phone)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String restaurantId = JsonPath.read(restaurant, "$.id");
+
+        String table = mockMvc.perform(post("/api/tables")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"restaurantId":"%s","name":"T1","capacity":%d}"""
+                        .formatted(restaurantId, capacity)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return JsonPath.read(table, "$.id");
     }
 
     private String registerAndGetToken(String email) throws Exception {
