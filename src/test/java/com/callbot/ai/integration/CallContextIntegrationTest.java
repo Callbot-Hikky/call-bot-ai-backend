@@ -51,7 +51,7 @@ class CallContextIntegrationTest extends AbstractIntegrationTest {
     void availability_whenFree_thenTakenAfterReservation() throws Exception {
         String phone = "+33100000061";
         String token = seedRestaurantWithTable(phone, "owner-avail@example.com", 2);
-        String slot = "2030-04-01T19:00:00Z";
+        String slot = tomorrowAt(19);
 
         String free = mockMvc.perform(get("/api/calls/availability")
                 .header(API_KEY_HEADER, API_KEY)
@@ -73,8 +73,8 @@ class CallContextIntegrationTest extends AbstractIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                         {"restaurantId":"%s","tableId":"%s","startsAt":"%s",
-                         "endsAt":"2030-04-01T21:00:00Z","partySize":2}"""
-                        .formatted(restaurantId, tableId, slot)))
+                         "endsAt":"%s","partySize":2}"""
+                        .formatted(restaurantId, tableId, slot, tomorrowAt(21))))
                 .andExpect(status().isCreated());
 
         // Same slot is now refused, with alternatives instead.
@@ -90,12 +90,43 @@ class CallContextIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void availability_inThePast_saysNoWithReasonPast() throws Exception {
+        String phone = "+33100000062";
+        seedRestaurantWithTable(phone, "owner-past@example.com", 2);
+
+        mockMvc.perform(get("/api/calls/availability")
+                .header(API_KEY_HEADER, API_KEY)
+                .param("restaurantPhone", phone)
+                .param("startsAt", "2020-01-01T19:00:00Z")
+                .param("partySize", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.available").value(false))
+                .andExpect(jsonPath("$.reason").value("past"))
+                .andExpect(jsonPath("$.alternatives").isEmpty());
+    }
+
+    @Test
+    void availability_withEndBeforeStart_is400() throws Exception {
+        String phone = "+33100000063";
+        seedRestaurantWithTable(phone, "owner-range@example.com", 2);
+
+        mockMvc.perform(get("/api/calls/availability")
+                .header(API_KEY_HEADER, API_KEY)
+                .param("restaurantPhone", phone)
+                .param("startsAt", tomorrowAt(21))
+                .param("endsAt", tomorrowAt(19))
+                .param("partySize", "2"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("invalid_range"));
+    }
+
+    @Test
     void contextAndAvailability_withoutApiKey_areRejected() throws Exception {
         mockMvc.perform(get("/api/calls/context").param("restaurantPhone", "+33100000060"))
                 .andExpect(status().isUnauthorized());
         mockMvc.perform(get("/api/calls/availability")
                 .param("restaurantPhone", "+33100000060")
-                .param("startsAt", "2030-04-01T19:00:00Z")
+                .param("startsAt", tomorrowAt(19))
                 .param("partySize", "2"))
                 .andExpect(status().isUnauthorized());
     }
@@ -150,5 +181,12 @@ class CallContextIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         return UUID.fromString(JsonPath.read(me, "$.organizationId"));
+    }
+
+    /** Tomorrow at the given UTC hour, ISO-8601: always inside the 7-day booking window. */
+    private static String tomorrowAt(int hourUtc) {
+        return java.time.LocalDate.now(java.time.ZoneOffset.UTC).plusDays(1)
+                .atTime(hourUtc, 0).atOffset(java.time.ZoneOffset.UTC)
+                .format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME);
     }
 }
