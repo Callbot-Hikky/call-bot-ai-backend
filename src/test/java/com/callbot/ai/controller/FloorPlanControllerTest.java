@@ -59,7 +59,7 @@ class FloorPlanControllerTest {
     @Test
     void get_returns200WithLayout() throws Exception {
         UUID restaurantId = UUID.randomUUID();
-        when(floorPlanService.get(restaurantId)).thenReturn(sample(restaurantId));
+        when(floorPlanService.get(eq(restaurantId), any())).thenReturn(sample(restaurantId));
 
         mockMvc.perform(get("/api/floor-plans/{id}", restaurantId))
                 .andExpect(status().isOk())
@@ -71,7 +71,7 @@ class FloorPlanControllerTest {
     @Test
     void get_whenMissing_returns404() throws Exception {
         UUID restaurantId = UUID.randomUUID();
-        when(floorPlanService.get(restaurantId))
+        when(floorPlanService.get(eq(restaurantId), any()))
                 .thenThrow(new ResourceNotFoundException("FloorPlan", restaurantId));
 
         mockMvc.perform(get("/api/floor-plans/{id}", restaurantId))
@@ -81,7 +81,7 @@ class FloorPlanControllerTest {
     @Test
     void upsert_withValidPayload_returns200() throws Exception {
         UUID restaurantId = UUID.randomUUID();
-        when(floorPlanService.upsert(eq(restaurantId), any())).thenReturn(sample(restaurantId));
+        when(floorPlanService.upsert(eq(restaurantId), any(), any())).thenReturn(sample(restaurantId));
 
         mockMvc.perform(put("/api/floor-plans/{id}", restaurantId)
                 .contentType(MediaType.APPLICATION_JSON)

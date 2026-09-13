@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -18,23 +19,30 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.callbot.ai.dto.CustomerResponse;
+import com.callbot.ai.dto.PendingTopUpResponse;
 import com.callbot.ai.dto.RescheduleSlotsResponse;
 import com.callbot.ai.dto.ReservationRequest;
 import com.callbot.ai.dto.ReservationResponse;
 import com.callbot.ai.dto.RestaurantSummaryResponse;
 import com.callbot.ai.dto.RestaurantTableResponse;
+import com.callbot.ai.exception.InvalidRequestException;
 import com.callbot.ai.exception.ResourceNotFoundException;
+import com.callbot.ai.model.ChargeKind;
+import com.callbot.ai.model.ChargeStatus;
 import com.callbot.ai.model.Reservation;
+import com.callbot.ai.model.ReservationStatus;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.model.RestaurantHours;
 import com.callbot.ai.model.RestaurantTable;
 import com.callbot.ai.notification.ReservationCreatedEvent;
 import com.callbot.ai.notification.ReservationUpdatedEvent;
 import com.callbot.ai.repository.CustomerRepository;
+import com.callbot.ai.repository.ReservationChargeRepository;
 import com.callbot.ai.repository.ReservationRepository;
 import com.callbot.ai.repository.RestaurantHoursRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 import com.callbot.ai.repository.RestaurantTableRepository;
+import com.callbot.ai.security.OrganizationScope;
 
 import lombok.RequiredArgsConstructor;
 
@@ -52,9 +60,15 @@ public class ReservationService {
     private final CustomerRepository customerRepository;
     private final RestaurantHoursRepository hoursRepository;
     private final ApplicationEventPublisher events;
+    private final OrganizationScope scope;
+    private final GuaranteePolicy guaranteePolicy;
+    private final PartySizeChangePolicy partySizeChangePolicy;
+    private final PartySizeTopUpService topUps;
+    private final PartySizeRefund partySizeRefund;
+    private final ReservationChargeRepository charges;
 
-    public ReservationResponse create(ReservationRequest request) {
-        requireRestaurant(request.restaurantId());
+    public ReservationResponse create(ReservationRequest request, String callerEmail) {
+        Restaurant restaurant = scope.ownedRestaurant(request.restaurantId(), callerEmail);
         reservationRepository.lockRestaurant(request.restaurantId());
         Reservation reservation = Reservation.builder()
                 .restaurantId(request.restaurantId())
@@ -71,6 +85,8 @@ public class ReservationService {
                 .source(request.source() != null ? request.source() : "callbot")
                 .notes(request.notes())
                 .build();
+        guaranteePolicy.applyOnCreation(reservation, restaurant, exemptingStaff(request, callerEmail));
+
         Reservation saved = reservationRepository.save(reservation);
         events.publishEvent(new ReservationCreatedEvent(saved.getId()));
         return ReservationResponse.from(saved);
@@ -87,28 +103,66 @@ public class ReservationService {
     }
 
     @Transactional(readOnly = true)
-    public List<ReservationResponse> list(UUID restaurantId, Set<String> expand) {
-        List<Reservation> reservations = restaurantId != null
-                ? reservationRepository.findByRestaurantId(restaurantId)
-                : reservationRepository.findAll();
+    public List<ReservationResponse> list(UUID restaurantId, Set<String> expand, String callerEmail) {
+        List<Reservation> reservations;
+        if (restaurantId != null) {
+            scope.requireOwnedRestaurant(restaurantId, callerEmail);
+            reservations = reservationRepository.findByRestaurantId(restaurantId);
+        } else {
+            List<UUID> restaurantIds = scope.ownedRestaurantIds(callerEmail).orElse(null);
+            if (restaurantIds == null) {
+                reservations = reservationRepository.findAll();
+            } else {
+                reservations = restaurantIds.isEmpty()
+                        ? List.of()
+                        : reservationRepository.findByRestaurantIdIn(restaurantIds);
+            }
+        }
         return reservations.stream().map(r -> toResponse(r, expand)).toList();
     }
 
     @Transactional(readOnly = true)
-    public ReservationResponse get(UUID id, Set<String> expand) {
-        return toResponse(find(id), expand);
+    public ReservationResponse get(UUID id, Set<String> expand, String callerEmail) {
+        return toResponse(find(id, callerEmail), expand);
     }
 
-    public ReservationResponse update(UUID id, ReservationRequest request, boolean notify) {
-        Reservation reservation = find(id);
+    /**
+     * Applies an edit from the dashboard.
+     *
+     * <p>A rise in covers on a paid reservation does not take effect here: the rule sends
+     * it off to be paid for, and the reservation keeps the party it was sold with until
+     * the money is in. Everything else in the request is still written — the staff member
+     * correcting a note alongside the covers should not lose the note.
+     *
+     * <p>A fall does take effect, and takes any request outstanding with it: that request
+     * priced the difference against the party that has just changed.
+     */
+    public ReservationResponse update(UUID id, ReservationRequest request, boolean notify, String callerEmail) {
+        Reservation reservation = find(id, callerEmail);
         reservationRepository.lockRestaurant(reservation.getRestaurantId());
+        // Before anything is written: a change in covers goes through the rule. It weighs
+        // the requested slot, since that is the slot the reservation will occupy.
+        PartySizeChange verdict = partySizeChangePolicy.decide(
+                reservation, request.partySize(), request.startsAt(), request.endsAt());
+        Integer requestedPartySize = request.partySize();
+        // A party that shrank gives its covers back, whoever pressed the button. A diner
+        // doing this from their own link and a staff member doing it for them over the
+        // telephone are the same event, and answering them differently would make the
+        // refund depend on which door the change came through.
+        if (verdict != PartySizeChange.COLLECT_TOP_UP && requestedPartySize != null
+                && reservation.getPartySize() != null) {
+            partySizeRefund.handBackCoversGivenUp(
+                    reservation, reservation.getPartySize(), requestedPartySize);
+        }
         reservation.setCustomerId(request.customerId());
         reservation.setTableId(request.tableId());
         reservation.setTableIds(singleOrEmpty(request.tableId()));
         reservation.setCallId(request.callId());
         reservation.setStartsAt(request.startsAt());
         reservation.setEndsAt(request.endsAt());
-        reservation.setPartySize(request.partySize());
+        if (verdict != PartySizeChange.COLLECT_TOP_UP) {
+            reservation.setPartySize(requestedPartySize);
+        }
         if (request.status() != null) {
             reservation.setStatus(request.status());
         }
@@ -117,17 +171,40 @@ public class ReservationService {
         }
         reservation.setNotes(request.notes());
         Reservation saved = reservationRepository.save(reservation);
+
+        if (verdict == PartySizeChange.APPLY_AND_LAPSE_TOP_UP) {
+            // The party this request was priced against has just moved. Leaving the link
+            // alive would let the diner buy a difference against a number that is gone.
+            topUps.lapsePendingFor(saved.getId(), "the party was revised down");
+        }
+        if (verdict == PartySizeChange.COLLECT_TOP_UP) {
+            // The diner is told about the money owed; a second "your booking changed"
+            // message would announce a change that has not happened.
+            return ReservationResponse.from(saved,
+                    PendingTopUpResponse.of(topUps.open(saved, requestedPartySize)));
+        }
         if (notify) {
             events.publishEvent(new ReservationUpdatedEvent(saved.getId()));
         }
-        return ReservationResponse.from(saved);
+        return ReservationResponse.from(saved, pendingTopUpOf(saved));
     }
 
-    public void delete(UUID id) {
-        if (!reservationRepository.existsById(id)) {
-            throw new ResourceNotFoundException("Reservation", id);
+    /**
+     * Cancels a reservation. Deleting the row would destroy the trace of a payment —
+     * Stripe keeps its own record either way — so the reservation is kept and marked
+     * cancelled, which also frees the table.
+     */
+    public void delete(UUID id, String callerEmail) {
+        Reservation reservation = find(id, callerEmail);
+        if (ReservationStatus.CANCELLED.equals(reservation.getStatus())) {
+            return;
         }
-        reservationRepository.deleteById(id);
+        // A request outstanding was for guests at a service that is not happening.
+        topUps.lapsePendingFor(reservation.getId(), "the reservation was cancelled");
+
+        reservation.setStatus(ReservationStatus.CANCELLED);
+        reservation.setCancelledAt(OffsetDateTime.now());
+        reservationRepository.save(reservation);
     }
 
     /**
@@ -137,8 +214,21 @@ public class ReservationService {
      * own slot on the current day.
      */
     @Transactional(readOnly = true)
-    public RescheduleSlotsResponse rescheduleSlots(UUID reservationId, LocalDate fromDate, Integer partySizeOverride) {
-        Reservation reservation = find(reservationId);
+    public RescheduleSlotsResponse rescheduleSlots(UUID reservationId, LocalDate fromDate,
+            Integer partySizeOverride, String callerEmail) {
+        return slotsFor(find(reservationId, callerEmail), fromDate, partySizeOverride);
+    }
+
+    /**
+     * The same search, from a reservation already in hand.
+     *
+     * <p>Split from the entry point above so the diner's own modification page can ask the
+     * identical question holding nothing but their token. One implementation, because two
+     * would eventually answer differently and someone would pick a slot that was never free.
+     */
+    @Transactional(readOnly = true)
+    public RescheduleSlotsResponse slotsFor(Reservation reservation, LocalDate fromDate,
+            Integer partySizeOverride) {
         Restaurant restaurant = restaurantRepository.findById(reservation.getRestaurantId())
                 .orElseThrow(() -> new ResourceNotFoundException("Restaurant", reservation.getRestaurantId()));
 
@@ -154,7 +244,7 @@ public class ReservationService {
         } else {
             partySize = 1;
         }
-        return slotsFor(restaurant, start, partySize, duration, reservationId);
+        return slotsFor(restaurant, start, partySize, duration, reservation.getId());
     }
 
     /**
@@ -305,18 +395,42 @@ public class ReservationService {
                     .map(RestaurantSummaryResponse::from)
                     .orElse(null);
         }
-        return ReservationResponse.from(reservation, table, tables, customer, restaurant);
+        return ReservationResponse.from(reservation, table, tables, customer, restaurant,
+                pendingTopUpOf(reservation));
     }
 
-    private Reservation find(UUID id) {
-        return reservationRepository.findById(id)
+    /** The top-up awaiting settlement on this reservation, when there is one. */
+    private PendingTopUpResponse pendingTopUpOf(Reservation reservation) {
+        return charges.findByReservationIdAndKindAndStatus(
+                        reservation.getId(), ChargeKind.PARTY_SIZE_TOP_UP, ChargeStatus.PENDING)
+                .map(PendingTopUpResponse::of)
+                .orElse(null);
+    }
+
+    /**
+     * Loads a reservation the caller is allowed to see. A reservation belonging to
+     * another organization is reported as missing rather than forbidden, so the API
+     * never confirms that someone else's reservation exists.
+     */
+    private Reservation find(UUID id, String callerEmail) {
+        Reservation reservation = reservationRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Reservation", id));
+        scope.requireOwnedThrough(reservation.getRestaurantId(), "Reservation", id, callerEmail);
+        return reservation;
     }
 
-    private void requireRestaurant(UUID restaurantId) {
-        if (!restaurantRepository.existsById(restaurantId)) {
-            throw new ResourceNotFoundException("Restaurant", restaurantId);
+    /**
+     * The staff member waiving the guarantee, if one is. Only a signed-in person can
+     * waive: the exception has to be attributable, otherwise nobody can tell why a
+     * paying mode brings in nothing.
+     */
+    private UUID exemptingStaff(ReservationRequest request, String callerEmail) {
+        if (!Boolean.TRUE.equals(request.exemptGuarantee())) {
+            return null;
         }
+        return scope.userIdOf(callerEmail)
+                .orElseThrow(() -> new InvalidRequestException(
+                        "Only a signed-in staff member can waive a guarantee"));
     }
 
     /** Table unique → ensemble (éventuellement vide) pour la table de liaison. */

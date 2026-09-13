@@ -12,5 +12,6 @@ public interface RestaurantHoursRepository extends JpaRepository<RestaurantHours
 
     List<RestaurantHours> findByRestaurantId(UUID restaurantId);
 
+    /** Everything under the restaurants one organization owns. */
     List<RestaurantHours> findByRestaurantIdIn(Collection<UUID> restaurantIds);
 }

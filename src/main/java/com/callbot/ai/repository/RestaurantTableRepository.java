@@ -12,5 +12,6 @@ public interface RestaurantTableRepository extends JpaRepository<RestaurantTable
 
     List<RestaurantTable> findByRestaurantId(UUID restaurantId);
 
+    /** Everything under the restaurants one organization owns. */
     List<RestaurantTable> findByRestaurantIdIn(Collection<UUID> restaurantIds);
 }

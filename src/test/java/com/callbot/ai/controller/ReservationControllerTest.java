@@ -26,6 +26,7 @@ import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.security.JwtAuthenticationFilter;
 import com.callbot.ai.security.RestaurantAccess;
 import com.callbot.ai.security.ServiceApiKeyFilter;
+import com.callbot.ai.service.NoShowService;
 import com.callbot.ai.service.ReservationService;
 
 @WebMvcTest(controllers = ReservationController.class,
@@ -41,6 +42,9 @@ class ReservationControllerTest {
     @MockitoBean
     private ReservationService reservationService;
     @MockitoBean
+    private NoShowService noShowService;
+
+    @MockitoBean
     private RestaurantAccess restaurantAccess;
 
     private ReservationResponse sample() {
@@ -48,12 +52,13 @@ class ReservationControllerTest {
                 OffsetDateTime.parse("2030-01-01T19:00:00Z"),
                 OffsetDateTime.parse("2030-01-01T21:00:00Z"),
                 2, "pending", "callbot", null,
-                OffsetDateTime.now(), OffsetDateTime.now(), null, null, null, null, null);
+                "none", "not_required", null, "eur", null,
+                OffsetDateTime.now(), OffsetDateTime.now(), null, null, null, null, null, null);
     }
 
     @Test
     void create_withValidPayload_returns201() throws Exception {
-        when(reservationService.create(any())).thenReturn(sample());
+        when(reservationService.create(any(), any())).thenReturn(sample());
 
         mockMvc.perform(post("/api/reservations")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -75,7 +80,7 @@ class ReservationControllerTest {
 
     @Test
     void get_returns200() throws Exception {
-        when(reservationService.get(any(), any())).thenReturn(sample());
+        when(reservationService.get(any(), any(), any())).thenReturn(sample());
 
         mockMvc.perform(get("/api/reservations/" + UUID.randomUUID()))
                 .andExpect(status().isOk())
@@ -84,7 +89,7 @@ class ReservationControllerTest {
 
     @Test
     void get_whenNotFound_returns404() throws Exception {
-        when(reservationService.get(any(), any()))
+        when(reservationService.get(any(), any(), any()))
                 .thenThrow(new ResourceNotFoundException("Reservation", UUID.randomUUID()));
 
         mockMvc.perform(get("/api/reservations/" + UUID.randomUUID()))
@@ -94,7 +99,7 @@ class ReservationControllerTest {
     @Test
     void delete_returns204() throws Exception {
         // La propriete se verifie sur la fiche existante : le service doit la renvoyer.
-        when(reservationService.get(any(), any())).thenReturn(sample());
+        when(reservationService.get(any(), any(), any())).thenReturn(sample());
         mockMvc.perform(delete("/api/reservations/" + UUID.randomUUID()))
                 .andExpect(status().isNoContent());
     }

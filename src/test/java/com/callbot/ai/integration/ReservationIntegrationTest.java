@@ -55,11 +55,13 @@ class ReservationIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.days.length()").value(7))
                 .andExpect(jsonPath("$.days[0].slots[?(@.startsAt =~ /2030-01-01T20:00.*/)]").exists());
 
-        // Suppression : 204, puis 404.
+        // Suppression : 204, puis la reservation est annulee, pas effacee. Une reservation
+        // payante porte des encaissements : elle doit rester lisible apres coup.
         mockMvc.perform(delete("/api/reservations/" + reservationId).header("Authorization", "Bearer " + token))
                 .andExpect(status().isNoContent());
         mockMvc.perform(get("/api/reservations/" + reservationId).header("Authorization", "Bearer " + token))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("cancelled"));
     }
 
     @Test

@@ -13,8 +13,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
-import com.callbot.ai.model.Organization;
-import com.callbot.ai.repository.OrganizationRepository;
 import com.callbot.ai.support.AbstractIntegrationTest;
 import com.jayway.jsonpath.JsonPath;
 
@@ -26,9 +24,6 @@ class CallContextIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
-
-    @Autowired
-    private OrganizationRepository organizationRepository;
 
     @Test
     void context_returnsAttributesAndPolicies() throws Exception {
@@ -139,10 +134,10 @@ class CallContextIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
-    /** Creates an organization, a restaurant with attributes and one table. */
+    /** Creates a restaurant with attributes and one table, owned by a fresh registrant. */
     private String seedRestaurantWithTable(String phone, String ownerEmail, int capacity) throws Exception {
         String token = registerAndGetToken(ownerEmail);
-        UUID organizationId = organizationOf(token);
+        UUID organizationId = organizationIdOf(token);
 
         String restaurant = mockMvc.perform(post("/api/restaurants")
                 .header("Authorization", "Bearer " + token)
@@ -165,6 +160,15 @@ class CallContextIntegrationTest extends AbstractIntegrationTest {
         return token;
     }
 
+    /** The organization the freshly registered user owns — the only one they may write to. */
+    private UUID organizationIdOf(String token) throws Exception {
+        String me = mockMvc.perform(get("/api/me")
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return UUID.fromString(JsonPath.read(me, "$.organizationId"));
+    }
+
     private String registerAndGetToken(String email) throws Exception {
         String response = mockMvc.perform(post("/api/auth/register")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -176,13 +180,6 @@ class CallContextIntegrationTest extends AbstractIntegrationTest {
     }
 
     /** L'organisation creee a l'inscription : la seule sur laquelle l'utilisateur peut agir. */
-    private UUID organizationOf(String token) throws Exception {
-        String me = mockMvc.perform(get("/api/me").header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString();
-        return UUID.fromString(JsonPath.read(me, "$.organizationId"));
-    }
-
     /** Tomorrow at the given UTC hour, ISO-8601: always inside the 7-day booking window. */
     private static String tomorrowAt(int hourUtc) {
         return java.time.LocalDate.now(java.time.ZoneOffset.UTC).plusDays(1)

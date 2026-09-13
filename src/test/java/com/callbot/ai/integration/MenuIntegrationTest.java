@@ -255,8 +255,9 @@ class MenuIntegrationTest extends AbstractIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                         {"mode":"none"}"""))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error").value("forbidden"));
+                // Non-divulgation : le restaurant d'une autre organisation est traite comme absent.
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("Not Found"));
     }
 
     @Test
@@ -269,8 +270,9 @@ class MenuIntegrationTest extends AbstractIntegrationTest {
         mockMvc.perform(multipart("/api/restaurants/" + restaurantId + "/menu/files")
                 .file(image)
                 .header("Authorization", "Bearer " + intruderToken))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error").value("forbidden"));
+                // Non-divulgation : le restaurant d'une autre organisation est traite comme absent.
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("Not Found"));
     }
 
     @Test

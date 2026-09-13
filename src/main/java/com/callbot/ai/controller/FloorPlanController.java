@@ -18,6 +18,7 @@ import com.callbot.ai.service.FloorPlanService;
 
 import jakarta.validation.Valid;
 import org.springframework.security.core.Authentication;
+import com.callbot.ai.security.AuthenticatedCaller;
 import com.callbot.ai.security.RestaurantAccess;
 import lombok.RequiredArgsConstructor;
 
@@ -32,20 +33,20 @@ public class FloorPlanController {
     @GetMapping("/{restaurantId}")
     public FloorPlanResponse get(@PathVariable UUID restaurantId, Authentication authentication) {
         restaurantAccess.requireOwned(restaurantId, authentication);
-        return floorPlanService.get(restaurantId);
+        return floorPlanService.get(restaurantId, AuthenticatedCaller.emailOf(authentication));
     }
 
     @PutMapping("/{restaurantId}")
     public FloorPlanResponse upsert(@PathVariable UUID restaurantId,
             @Valid @RequestBody FloorPlanRequest request, Authentication authentication) {
         restaurantAccess.requireOwned(restaurantId, authentication);
-        return floorPlanService.upsert(restaurantId, request);
+        return floorPlanService.upsert(restaurantId, request, AuthenticatedCaller.emailOf(authentication));
     }
 
     @DeleteMapping("/{restaurantId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable UUID restaurantId, Authentication authentication) {
         restaurantAccess.requireOwned(restaurantId, authentication);
-        floorPlanService.delete(restaurantId);
+        floorPlanService.delete(restaurantId, AuthenticatedCaller.emailOf(authentication));
     }
 }
