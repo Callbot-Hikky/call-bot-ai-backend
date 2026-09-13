@@ -1,6 +1,7 @@
 package com.callbot.ai.service;
 
 import java.time.Duration;
+import java.time.LocalDate;
 
 /**
  * Regles de reservation communes a l'assistant vocal et a la reservation en ligne :
@@ -20,6 +21,17 @@ public final class BookingPolicy {
     /** Un client ne cumule pas plusieurs reservations actives le meme jour dans le meme restaurant. */
     public static final int MAX_ACTIVE_PER_DAY = 1;
 
+    /** A caller asking at 20:02 for "20:00" is not in the past. */
+    public static final Duration PAST_TOLERANCE = Duration.ofMinutes(5);
+
+    public static final Duration MIN_DURATION = Duration.ofMinutes(30);
+    public static final Duration MAX_DURATION = Duration.ofHours(4);
+
     private BookingPolicy() {
+    }
+
+    /** Last bookable day, today being day 1 of the window. */
+    public static LocalDate lastBookableDay(LocalDate today) {
+        return today.plusDays(WINDOW_DAYS - 1L);
     }
 }

@@ -1,5 +1,7 @@
 package com.callbot.ai.service;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -57,6 +59,12 @@ public class CallIngestService {
         Restaurant restaurant = restaurantRepository.findByPhoneNumber(request.restaurantPhone())
                 .orElseThrow(() -> new ResourceNotFoundException("Restaurant", request.restaurantPhone()));
 
+        // Same time rules as availability. Replays are handled above so they stay idempotent.
+        Booking booking = request.reservation();
+        SlotRules.requireValidRange(booking.startsAt(), booking.endsAt());
+        ZoneId zone = ZoneId.of(restaurant.getTimezone());
+        SlotRules.requireBookable(zone, OffsetDateTime.now(zone), booking.startsAt());
+
         Customer customer = upsertCustomer(restaurant.getId(), request.customer());
 
         Call call = callRepository.save(Call.builder()
@@ -71,7 +79,6 @@ public class CallIngestService {
                 .captured(true)
                 .build());
 
-        Booking booking = request.reservation();
         Set<UUID> tableIds = resolveTableIds(booking.tableIds(), booking.tableId());
         Reservation reservation = reservationRepository.save(Reservation.builder()
                 .restaurantId(restaurant.getId())

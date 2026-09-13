@@ -42,11 +42,11 @@ class CallIngestIntegrationTest extends AbstractIntegrationTest {
                   "fromNumber": "+33611112222",
                   "customer": {"phone": "+33611112222", "firstName": "Alice"},
                   "reservation": {
-                    "startsAt": "2030-03-01T19:00:00Z",
-                    "endsAt": "2030-03-01T21:00:00Z",
+                    "startsAt": "%s",
+                    "endsAt": "%s",
                     "partySize": 2
                   }
-                }""".formatted(sid, restaurantPhone);
+                }""".formatted(sid, restaurantPhone, tomorrowAt(19), tomorrowAt(21));
 
         // First call: creates everything, alreadyProcessed = false.
         String first = mockMvc.perform(post("/api/calls/ingest")
@@ -70,14 +70,32 @@ class CallIngestIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void ingest_slotInThePast_is400_andCreatesNothing() throws Exception {
+        String restaurantPhone = "+33100000053";
+        seedRestaurant("owner-ingest-past@example.com", restaurantPhone);
+
+        mockMvc.perform(post("/api/calls/ingest")
+                .header(ServiceApiKeyHeader.NAME, API_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"twilioCallSid":"CA-%s","restaurantPhone":"%s",
+                         "customer":{"phone":"+33600000099"},
+                         "reservation":{"startsAt":"2020-01-01T19:00:00Z",
+                                        "endsAt":"2020-01-01T21:00:00Z","partySize":2}}"""
+                        .formatted(UUID.randomUUID(), restaurantPhone)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("slot_in_past"));
+    }
+
+    @Test
     void ingest_withoutApiKey_isRejected() throws Exception {
         mockMvc.perform(post("/api/calls/ingest")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                         {"twilioCallSid":"CA-x","restaurantPhone":"+33100000051",
                          "customer":{"phone":"+33600000000"},
-                         "reservation":{"startsAt":"2030-03-01T19:00:00Z",
-                                        "endsAt":"2030-03-01T21:00:00Z","partySize":2}}"""))
+                         "reservation":{"startsAt":"%s",
+                                        "endsAt":"%s","partySize":2}}""".formatted(tomorrowAt(19), tomorrowAt(21))))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -89,9 +107,9 @@ class CallIngestIntegrationTest extends AbstractIntegrationTest {
                 .content("""
                         {"twilioCallSid":"CA-%s","restaurantPhone":"+33999999999",
                          "customer":{"phone":"+33600000000"},
-                         "reservation":{"startsAt":"2030-03-01T19:00:00Z",
-                                        "endsAt":"2030-03-01T21:00:00Z","partySize":2}}"""
-                        .formatted(UUID.randomUUID())))
+                         "reservation":{"startsAt":"%s",
+                                        "endsAt":"%s","partySize":2}}"""
+                        .formatted(UUID.randomUUID(), tomorrowAt(19), tomorrowAt(21))))
                 .andExpect(status().isNotFound());
     }
 
@@ -128,5 +146,12 @@ class CallIngestIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         return UUID.fromString(JsonPath.read(me, "$.organizationId"));
+    }
+
+    /** Tomorrow at the given UTC hour, ISO-8601: always inside the 7-day booking window. */
+    private static String tomorrowAt(int hourUtc) {
+        return java.time.LocalDate.now(java.time.ZoneOffset.UTC).plusDays(1)
+                .atTime(hourUtc, 0).atOffset(java.time.ZoneOffset.UTC)
+                .format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME);
     }
 }

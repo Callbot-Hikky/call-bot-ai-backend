@@ -7,7 +7,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -21,6 +23,7 @@ import com.callbot.ai.dto.CallIngestRequest;
 import com.callbot.ai.dto.CallIngestRequest.Booking;
 import com.callbot.ai.dto.CallIngestRequest.Caller;
 import com.callbot.ai.dto.CallIngestResponse;
+import com.callbot.ai.exception.BookingException;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.model.Call;
 import com.callbot.ai.model.Customer;
@@ -52,14 +55,22 @@ class CallIngestServiceTest {
     private CallIngestRequest request() {
         return new CallIngestRequest(SID, RESTO_PHONE, CALLER_PHONE,
                 new Caller(CALLER_PHONE, "Alice", null, null),
-                new Booking(null, null,
-                        OffsetDateTime.parse("2030-01-01T19:00:00Z"),
-                        OffsetDateTime.parse("2030-01-01T21:00:00Z"),
-                        2, null));
+                new Booking(null, null, SLOT, SLOT.plusHours(2), 2, null));
+    }
+
+    private static final ZoneId PARIS = ZoneId.of("Europe/Paris");
+    // Tomorrow 20:00 Paris: inside the booking window whatever day the tests run.
+    private static final OffsetDateTime SLOT = LocalDate.now(PARIS).plusDays(1)
+            .atTime(20, 0).atZone(PARIS).toOffsetDateTime();
+
+    private CallIngestRequest requestAt(OffsetDateTime startsAt) {
+        return new CallIngestRequest(SID, RESTO_PHONE, CALLER_PHONE,
+                new Caller(CALLER_PHONE, "Alice", null, null),
+                new Booking(null, null, startsAt, startsAt.plusHours(2), 2, null));
     }
 
     private Restaurant restaurant() {
-        return Restaurant.builder().id(UUID.randomUUID()).build();
+        return Restaurant.builder().id(UUID.randomUUID()).timezone("Europe/Paris").build();
     }
 
     @Test
@@ -145,5 +156,44 @@ class CallIngestServiceTest {
 
     private interface IdGetter<T> {
         UUID get(T entity);
+    }
+
+    @Test
+    void ingest_whenSlotInThePast_rejectsAndWritesNothing() {
+        when(callRepository.findByTwilioCallSid(SID)).thenReturn(Optional.empty());
+        when(restaurantRepository.findByPhoneNumber(RESTO_PHONE)).thenReturn(Optional.of(restaurant()));
+
+        assertThatThrownBy(() -> callIngestService.ingest(requestAt(OffsetDateTime.now(PARIS).minusDays(1))))
+                .isInstanceOf(BookingException.class)
+                .extracting("code").isEqualTo("slot_in_past");
+
+        verify(customerRepository, never()).save(any());
+        verify(callRepository, never()).save(any());
+        verify(reservationRepository, never()).save(any());
+    }
+
+    @Test
+    void ingest_whenSlotBeyondWindow_rejects() {
+        when(callRepository.findByTwilioCallSid(SID)).thenReturn(Optional.empty());
+        when(restaurantRepository.findByPhoneNumber(RESTO_PHONE)).thenReturn(Optional.of(restaurant()));
+        OffsetDateTime farAway = LocalDate.now(PARIS).plusDays(BookingPolicy.WINDOW_DAYS + 5L)
+                .atTime(20, 0).atZone(PARIS).toOffsetDateTime();
+
+        assertThatThrownBy(() -> callIngestService.ingest(requestAt(farAway)))
+                .isInstanceOf(BookingException.class)
+                .extracting("code").isEqualTo("slot_out_of_window");
+    }
+
+    @Test
+    void ingest_replayOfAnAlreadyIngestedCall_staysIdempotent_evenIfTheSlotIsNowPast() {
+        // Idempotency is checked before the time rules.
+        Call existing = Call.builder().id(UUID.randomUUID()).customerId(UUID.randomUUID()).build();
+        when(callRepository.findByTwilioCallSid(SID)).thenReturn(Optional.of(existing));
+        when(reservationRepository.findByCallId(existing.getId())).thenReturn(Optional.empty());
+
+        CallIngestResponse response = callIngestService.ingest(requestAt(OffsetDateTime.now(PARIS).minusDays(3)));
+
+        assertThat(response.alreadyProcessed()).isTrue();
+        verify(restaurantRepository, never()).findByPhoneNumber(any());
     }
 }
