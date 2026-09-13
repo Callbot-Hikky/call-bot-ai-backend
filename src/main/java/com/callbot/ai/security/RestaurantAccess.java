@@ -42,8 +42,13 @@ public class RestaurantAccess {
     /** Refuse toute organisation autre que celle de l'utilisateur (creation de restaurant). */
     @Transactional(readOnly = true)
     public void requireOrganization(UUID organizationId, Authentication authentication) {
-        if (organizationId == null || !organizationId.equals(organizationOf(authentication))) {
+        if (organizationId == null) {
+            // Requete malformee, pas une ressource cachee : rien a dissimuler ici.
             throw new AccessDeniedException("This organization is not yours");
+        }
+        if (!organizationId.equals(organizationOf(authentication))) {
+            // Meme raison qu'au-dessus : un 403 confirmerait que cette organisation existe.
+            throw new ResourceNotFoundException("Organization", organizationId);
         }
     }
 
@@ -54,7 +59,9 @@ public class RestaurantAccess {
         Restaurant restaurant = restaurantRepository.findById(restaurantId)
                 .orElseThrow(() -> new ResourceNotFoundException("Restaurant", restaurantId));
         if (!restaurant.getOrganizationId().equals(organizationId)) {
-            throw new AccessDeniedException("Restaurant " + restaurantId + " does not belong to your organization");
+            // Le restaurant d'une autre organisation n'existe pas, de son point de vue : un
+            // 403 confirmerait son existence. On ne distingue donc pas l'absent de l'interdit.
+            throw new ResourceNotFoundException("Restaurant", restaurantId);
         }
         return restaurant;
     }

@@ -67,8 +67,9 @@ class ReservationMessageTemplatesTest {
 
         assertThat(message).contains("[Voir le menu](https://app.hikky.fr/client/restaurants/"
                 + restaurantId + "/menu?reservation=" + token + ")");
-        assertThat(message).contains("[Choisissez un autre horaire](https://app.hikky.fr/client/reservations/"
-                + token + "/reschedule)");
+        // Le lien de replanification a cede la place a celui de modification, qui couvre
+        // l'horaire ET les couverts.
+        assertThat(message).contains("[Modifier ma réservation](https://app.hikky.fr/client/reservations/modifier/");
     }
 
     @Test
@@ -78,7 +79,7 @@ class ReservationMessageTemplatesTest {
         String message = templates("https://app.hikky.fr").forClient(reservation(), customer(), restaurant());
 
         assertThat(message).doesNotContain("Voir le menu");
-        assertThat(message).contains("Choisissez un autre horaire");
+        assertThat(message).contains("Modifier ma réservation");
     }
 
     @Test

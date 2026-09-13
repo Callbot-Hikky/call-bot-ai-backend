@@ -16,5 +16,11 @@ public record ReservationRequest(
         @NotNull @Positive Integer partySize,
         String status,
         String source,
-        String notes) {
+        String notes,
+        /**
+         * Staff waiving the guarantee for this reservation — a regular but traced
+         * exception (a regular, someone standing at the counter). Ignored when the
+         * restaurant asks for no guarantee.
+         */
+        Boolean exemptGuarantee) {
 }

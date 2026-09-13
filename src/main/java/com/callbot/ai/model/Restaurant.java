@@ -59,6 +59,35 @@ public class Restaurant {
     @Column(nullable = false)
     private String locale = "fr";
 
+    /** Which guarantee the restaurant asks of its diners. See {@link GuaranteeMode}. */
+    @Builder.Default
+    @Column(name = "guarantee_mode", nullable = false)
+    private String guaranteeMode = GuaranteeMode.NONE.code();
+
+    /** Booking fee charged per guest, in cents. Required in {@code booking_fee} mode. */
+    @Column(name = "booking_fee_cents_per_guest")
+    private Integer bookingFeeCentsPerGuest;
+
+    /** No-show penalty per guest, in cents. Required in {@code no_show} mode. */
+    @Column(name = "no_show_penalty_cents_per_guest")
+    private Integer noShowPenaltyCentsPerGuest;
+
+    /** Hours before the service up to which a booking fee is fully refunded. */
+    @Builder.Default
+    @Column(name = "refund_window_hours", nullable = false)
+    private Integer refundWindowHours = 48;
+
+    /**
+     * Hours before the service up to which a diner may still change their own booking.
+     *
+     * <p>Zero means up to the service itself, the same reading {@link #refundWindowHours}
+     * gives it. The two are independent: handing money back and moving a party do not
+     * commit the dining room in the same way.
+     */
+    @Builder.Default
+    @Column(name = "modification_window_hours", nullable = false)
+    private Integer modificationWindowHours = 0;
+
     @Builder.Default
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
@@ -68,6 +97,40 @@ public class Restaurant {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> attributes = new HashMap<>();
+
+    /**
+     * Stripe connected account collecting this restaurant's guarantees.
+     *
+     * <p>Held per restaurant, not per organization: a Stripe account is tied to a legal
+     * entity and a bank account, and two establishments of one owner are often two
+     * companies. Sharing one would send the second's money to the first's bank.
+     */
+    @Column(name = "stripe_account_id")
+    private String stripeAccountId;
+
+    /** Stripe lets this account take payments; a paying guarantee mode needs it. */
+    @Builder.Default
+    @Column(name = "stripe_charges_enabled", nullable = false)
+    private boolean stripeChargesEnabled = false;
+
+    @Builder.Default
+    @Column(name = "stripe_payouts_enabled", nullable = false)
+    private boolean stripePayoutsEnabled = false;
+
+    @Builder.Default
+    @Column(name = "stripe_details_submitted", nullable = false)
+    private boolean stripeDetailsSubmitted = false;
+
+    @Column(name = "stripe_onboarded_at")
+    private OffsetDateTime stripeOnboardedAt;
+
+    /** Bank disputes on this restaurant's booking fees, absorbed by Alloquence. */
+    @Builder.Default
+    @Column(name = "stripe_dispute_count", nullable = false)
+    private int stripeDisputeCount = 0;
+
+    @Column(name = "stripe_last_dispute_at")
+    private OffsetDateTime stripeLastDisputeAt;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

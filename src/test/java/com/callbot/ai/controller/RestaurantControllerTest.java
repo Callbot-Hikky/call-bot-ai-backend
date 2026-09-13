@@ -27,6 +27,7 @@ import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.security.JwtAuthenticationFilter;
 import com.callbot.ai.security.RestaurantAccess;
 import com.callbot.ai.security.ServiceApiKeyFilter;
+import com.callbot.ai.service.GuaranteeSettingsService;
 import com.callbot.ai.service.RestaurantService;
 
 @WebMvcTest(controllers = RestaurantController.class,
@@ -44,6 +45,9 @@ class RestaurantControllerTest {
     @MockitoBean
     private RestaurantAccess restaurantAccess;
 
+    @MockitoBean
+    private GuaranteeSettingsService guaranteeSettingsService;
+
     private RestaurantResponse sample() {
         return new RestaurantResponse(UUID.randomUUID(), UUID.randomUUID(), "Chez Test",
                 "+33100000001", null, null, null, "Europe/Paris", "fr", true, Map.of(),
@@ -52,7 +56,7 @@ class RestaurantControllerTest {
 
     @Test
     void create_withValidPayload_returns201() throws Exception {
-        when(restaurantService.create(any())).thenReturn(sample());
+        when(restaurantService.create(any(), any())).thenReturn(sample());
 
         mockMvc.perform(post("/api/restaurants")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -74,7 +78,7 @@ class RestaurantControllerTest {
 
     @Test
     void get_returns200() throws Exception {
-        when(restaurantService.get(any())).thenReturn(sample());
+        when(restaurantService.get(any(), any())).thenReturn(sample());
 
         mockMvc.perform(get("/api/restaurants/" + UUID.randomUUID()))
                 .andExpect(status().isOk())
@@ -83,7 +87,7 @@ class RestaurantControllerTest {
 
     @Test
     void get_whenNotFound_returns404() throws Exception {
-        when(restaurantService.get(any()))
+        when(restaurantService.get(any(), any()))
                 .thenThrow(new ResourceNotFoundException("Restaurant", UUID.randomUUID()));
 
         mockMvc.perform(get("/api/restaurants/" + UUID.randomUUID()))

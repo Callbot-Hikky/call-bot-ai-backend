@@ -22,6 +22,11 @@ public record ReservationResponse(
         String status,
         String source,
         String notes,
+        String guaranteeMode,
+        String guaranteeStatus,
+        Integer guaranteeAmountCents,
+        String currency,
+        OffsetDateTime guaranteeExpiresAt,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
         OffsetDateTime cancelledAt,
@@ -30,15 +35,35 @@ public record ReservationResponse(
         // Détail de toutes les tables (via ?expand=table) quand le groupe est réparti.
         @JsonInclude(JsonInclude.Include.NON_NULL) List<RestaurantTableResponse> tables,
         @JsonInclude(JsonInclude.Include.NON_NULL) CustomerResponse customer,
-        @JsonInclude(JsonInclude.Include.NON_NULL) RestaurantSummaryResponse restaurant) {
+        @JsonInclude(JsonInclude.Include.NON_NULL) RestaurantSummaryResponse restaurant,
+        // Present only while a rise in covers is waiting to be paid for.
+        @JsonInclude(JsonInclude.Include.NON_NULL) PendingTopUpResponse pendingTopUp) {
 
     public static ReservationResponse from(Reservation reservation) {
-        return from(reservation, null, null, null, null);
+        return from(reservation, null, null, null, null, null);
+    }
+
+    public static ReservationResponse from(Reservation reservation,
+            PendingTopUpResponse pendingTopUp) {
+        return from(reservation, null, null, null, null, pendingTopUp);
+    }
+
+    public static ReservationResponse from(Reservation reservation,
+            RestaurantTableResponse table, CustomerResponse customer,
+            RestaurantSummaryResponse restaurant) {
+        return from(reservation, table, null, customer, restaurant, null);
     }
 
     public static ReservationResponse from(Reservation reservation,
             RestaurantTableResponse table, List<RestaurantTableResponse> tables,
             CustomerResponse customer, RestaurantSummaryResponse restaurant) {
+        return from(reservation, table, tables, customer, restaurant, null);
+    }
+
+    public static ReservationResponse from(Reservation reservation,
+            RestaurantTableResponse table, List<RestaurantTableResponse> tables,
+            CustomerResponse customer, RestaurantSummaryResponse restaurant,
+            PendingTopUpResponse pendingTopUp) {
         return new ReservationResponse(
                 reservation.getId(),
                 reservation.getRestaurantId(),
@@ -52,12 +77,18 @@ public record ReservationResponse(
                 reservation.getStatus(),
                 reservation.getSource(),
                 reservation.getNotes(),
+                reservation.getGuaranteeMode(),
+                reservation.getGuaranteeStatus(),
+                reservation.getGuaranteeAmountCents(),
+                reservation.getCurrency(),
+                reservation.getGuaranteeExpiresAt(),
                 reservation.getCreatedAt(),
                 reservation.getUpdatedAt(),
                 reservation.getCancelledAt(),
                 table,
                 tables,
                 customer,
-                restaurant);
+                restaurant,
+                pendingTopUp);
     }
 }

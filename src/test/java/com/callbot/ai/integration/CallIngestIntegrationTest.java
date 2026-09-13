@@ -115,7 +115,9 @@ class CallIngestIntegrationTest extends AbstractIntegrationTest {
 
     private void seedRestaurant(String ownerEmail, String phone) throws Exception {
         String token = registerAndGetToken(ownerEmail);
-        UUID organizationId = organizationOf(token);
+        // A restaurant belongs to the signed-in owner's own organization; creating one
+        // under an unrelated organization is exactly what the scoping now refuses.
+        UUID organizationId = organizationIdOf(token);
         mockMvc.perform(post("/api/restaurants")
                 .header("Authorization", "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -123,6 +125,14 @@ class CallIngestIntegrationTest extends AbstractIntegrationTest {
                         {"organizationId":"%s","name":"Ingest Resto","phoneNumber":"%s"}"""
                         .formatted(organizationId, phone)))
                 .andExpect(status().isCreated());
+    }
+
+    private UUID organizationIdOf(String token) throws Exception {
+        String me = mockMvc.perform(get("/api/me")
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return UUID.fromString(JsonPath.read(me, "$.organizationId"));
     }
 
     private String registerAndGetToken(String email) throws Exception {
@@ -141,13 +151,6 @@ class CallIngestIntegrationTest extends AbstractIntegrationTest {
     }
 
     /** L'organisation creee a l'inscription : la seule sur laquelle l'utilisateur peut agir. */
-    private UUID organizationOf(String token) throws Exception {
-        String me = mockMvc.perform(get("/api/me").header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString();
-        return UUID.fromString(JsonPath.read(me, "$.organizationId"));
-    }
-
     /** Tomorrow at the given UTC hour, ISO-8601: always inside the 7-day booking window. */
     private static String tomorrowAt(int hourUtc) {
         return java.time.LocalDate.now(java.time.ZoneOffset.UTC).plusDays(1)

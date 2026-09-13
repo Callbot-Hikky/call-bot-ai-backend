@@ -10,7 +10,7 @@ import com.callbot.ai.dto.FloorPlanResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.model.FloorPlan;
 import com.callbot.ai.repository.FloorPlanRepository;
-import com.callbot.ai.repository.RestaurantRepository;
+import com.callbot.ai.security.OrganizationScope;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -23,26 +23,29 @@ import lombok.RequiredArgsConstructor;
 public class FloorPlanService {
 
     private final FloorPlanRepository floorPlanRepository;
-    private final RestaurantRepository restaurantRepository;
+    private final OrganizationScope scope;
     private final ObjectMapper objectMapper;
 
     @Transactional(readOnly = true)
-    public FloorPlanResponse get(UUID restaurantId) {
+    public FloorPlanResponse get(UUID restaurantId, String callerEmail) {
+        // The plan is keyed by the restaurant, so owning the restaurant is the whole check.
+        scope.requireOwnedRestaurant(restaurantId, callerEmail);
         FloorPlan plan = floorPlanRepository.findById(restaurantId)
                 .orElseThrow(() -> new ResourceNotFoundException("FloorPlan", restaurantId));
         return toResponse(plan);
     }
 
     /** Creates the plan on first save, replaces the layout afterwards. */
-    public FloorPlanResponse upsert(UUID restaurantId, FloorPlanRequest request) {
-        requireRestaurant(restaurantId);
+    public FloorPlanResponse upsert(UUID restaurantId, FloorPlanRequest request, String callerEmail) {
+        scope.requireOwnedRestaurant(restaurantId, callerEmail);
         FloorPlan plan = floorPlanRepository.findById(restaurantId)
                 .orElseGet(() -> FloorPlan.builder().restaurantId(restaurantId).build());
         plan.setLayout(request.layout().toString());
         return toResponse(floorPlanRepository.save(plan));
     }
 
-    public void delete(UUID restaurantId) {
+    public void delete(UUID restaurantId, String callerEmail) {
+        scope.requireOwnedRestaurant(restaurantId, callerEmail);
         if (!floorPlanRepository.existsById(restaurantId)) {
             throw new ResourceNotFoundException("FloorPlan", restaurantId);
         }
@@ -66,9 +69,4 @@ public class FloorPlanService {
         }
     }
 
-    private void requireRestaurant(UUID restaurantId) {
-        if (!restaurantRepository.existsById(restaurantId)) {
-            throw new ResourceNotFoundException("Restaurant", restaurantId);
-        }
-    }
 }

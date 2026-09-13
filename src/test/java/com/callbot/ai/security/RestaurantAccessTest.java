@@ -52,13 +52,13 @@ class RestaurantAccessTest {
     }
 
     @Test
-    void requireOwned_whenOtherOrganization_throwsAccessDenied() {
+    void requireOwned_whenOtherOrganization_isSimplyNotThere() {
         authenticatedAs(organizationId);
         Restaurant other = Restaurant.builder().id(restaurantId).organizationId(UUID.randomUUID()).name("Autre").build();
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(other));
 
         assertThatThrownBy(() -> access.requireOwned(restaurantId, authentication))
-                .isInstanceOf(AccessDeniedException.class);
+                .isInstanceOf(ResourceNotFoundException.class);
     }
 
     @Test
@@ -83,8 +83,9 @@ class RestaurantAccessTest {
     void requireOrganization_acceptsOnlyTheUsersOrganization() {
         authenticatedAs(organizationId);
         access.requireOrganization(organizationId, authentication);
+        // Une organisation tierce est traitee comme absente : un 403 confirmerait son existence.
         assertThatThrownBy(() -> access.requireOrganization(UUID.randomUUID(), authentication))
-                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+                .isInstanceOf(ResourceNotFoundException.class);
         assertThatThrownBy(() -> access.requireOrganization(null, authentication))
                 .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
     }

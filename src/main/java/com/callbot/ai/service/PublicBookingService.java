@@ -126,7 +126,7 @@ public class PublicBookingService {
         Reservation reservation = requireReschedulable(token);
         int size = partySize != null ? partySize : reservation.getPartySize();
         requirePartySize(size);
-        return reservationService.rescheduleSlots(reservation.getId(), null, size);
+        return reservationService.rescheduleSlots(reservation.getId(), null, size, null);
     }
 
     /**

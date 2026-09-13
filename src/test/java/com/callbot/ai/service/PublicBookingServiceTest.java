@@ -342,7 +342,7 @@ class PublicBookingServiceTest {
         Reservation existing = existingReservation("pending");
         when(reservationRepository.findByPublicToken(existing.getPublicToken())).thenReturn(Optional.of(existing));
         RescheduleSlotsResponse expected = new RescheduleSlotsResponse(List.of());
-        when(reservationService.rescheduleSlots(existing.getId(), null, 4)).thenReturn(expected);
+        when(reservationService.rescheduleSlots(existing.getId(), null, 4, null)).thenReturn(expected);
 
         assertThat(service.rescheduleSlots(existing.getPublicToken(), 4)).isSameAs(expected);
     }

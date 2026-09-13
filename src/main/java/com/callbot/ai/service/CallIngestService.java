@@ -8,6 +8,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +22,7 @@ import com.callbot.ai.model.Call;
 import com.callbot.ai.model.Customer;
 import com.callbot.ai.model.Reservation;
 import com.callbot.ai.model.Restaurant;
+import com.callbot.ai.notification.ReservationCreatedEvent;
 import com.callbot.ai.repository.CallRepository;
 import com.callbot.ai.repository.CustomerRepository;
 import com.callbot.ai.repository.ReservationRepository;
@@ -45,6 +47,8 @@ public class CallIngestService {
     private final CustomerRepository customerRepository;
     private final CallRepository callRepository;
     private final ReservationRepository reservationRepository;
+    private final GuaranteePolicy guaranteePolicy;
+    private final ApplicationEventPublisher events;
 
     public CallIngestResponse ingest(CallIngestRequest request) {
         Optional<Call> alreadyIngested = callRepository.findByTwilioCallSid(request.twilioCallSid());
@@ -80,7 +84,7 @@ public class CallIngestService {
                 .build());
 
         Set<UUID> tableIds = resolveTableIds(booking.tableIds(), booking.tableId());
-        Reservation reservation = reservationRepository.save(Reservation.builder()
+        Reservation reservation = Reservation.builder()
                 .restaurantId(restaurant.getId())
                 .customerId(customer.getId())
                 .tableId(tableIds.isEmpty() ? null : tableIds.iterator().next())
@@ -91,10 +95,15 @@ public class CallIngestService {
                 .partySize(booking.partySize())
                 .source("callbot")
                 .notes(booking.notes())
-                .build());
+                .build();
+        // The phone is where reservations actually come from, so the guarantee has to be
+        // applied here too — and the diner has to be told, which is what the event does.
+        guaranteePolicy.applyOnCreation(reservation, restaurant, null);
+        Reservation saved = reservationRepository.save(reservation);
+        events.publishEvent(new ReservationCreatedEvent(saved.getId()));
 
         return new CallIngestResponse(call.getId(), customer.getId(),
-                ReservationResponse.from(reservation), false);
+                ReservationResponse.from(saved), false);
     }
 
     /**

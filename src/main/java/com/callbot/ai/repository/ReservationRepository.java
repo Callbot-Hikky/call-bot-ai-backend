@@ -8,7 +8,12 @@ import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.QueryHints;
 import org.springframework.data.repository.query.Param;
+
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.QueryHint;
 
 import com.callbot.ai.model.Reservation;
 
@@ -16,7 +21,75 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
 
     List<Reservation> findByRestaurantId(UUID restaurantId);
 
+    /**
+     * Pre-held reservations whose payment window has closed; their tables must be freed.
+     *
+     * <p>Rows are locked and already-locked ones skipped, so several application
+     * instances can run the sweep at once without expiring the same reservation twice
+     * — which would send the diner two "your table is gone" messages.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
+    @Query("""
+            SELECT r FROM Reservation r
+            WHERE r.status = :status AND r.guaranteeExpiresAt < :deadline
+            """)
+    List<Reservation> lockExpiredHolds(@Param("status") String status,
+            @Param("deadline") OffsetDateTime deadline);
+
+    // Payouts and disputes read the charge register, not the reservation:
+    // see ReservationChargeRepository.
+
+    /**
+     * Penalties whose cancellation window has closed and which are still unpaid.
+     *
+     * <p>Locked and skipped rather than queued: two instances must never debit the same
+     * diner twice, and a row another instance is already charging is not worth waiting on.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
+    @Query("""
+            SELECT r FROM Reservation r
+            WHERE r.penaltyDueAt IS NOT NULL
+              AND r.penaltyDueAt < :now
+              AND r.penaltyAttempts < :maxAttempts
+              AND NOT EXISTS (SELECT 1 FROM ReservationCharge c
+                              WHERE c.reservationId = r.id
+                                AND c.kind = :penaltyKind
+                                AND c.status = :paid)
+            """)
+    List<Reservation> lockDuePenalties(@Param("now") OffsetDateTime now,
+            @Param("maxAttempts") int maxAttempts,
+            @Param("penaltyKind") String penaltyKind,
+            @Param("paid") String paid);
+
+    /** Cards still held for services that are over and can no longer produce a debit. */
+    @Query("""
+            SELECT r FROM Reservation r
+            WHERE r.stripePaymentMethodId IS NOT NULL
+              AND r.paymentMethodDetachedAt IS NULL
+              AND r.endsAt < :before
+              AND (r.penaltyDueAt IS NULL
+                   OR r.penaltyAttempts >= :maxAttempts
+                   OR EXISTS (SELECT 1 FROM ReservationCharge c
+                              WHERE c.reservationId = r.id
+                                AND c.kind = :penaltyKind
+                                AND c.status = :paid))
+            """)
+    List<Reservation> findCardsToDetach(@Param("before") OffsetDateTime before,
+            @Param("maxAttempts") int maxAttempts,
+            @Param("penaltyKind") String penaltyKind,
+            @Param("paid") String paid);
+
+    Optional<Reservation> findByPaymentToken(String paymentToken);
+
+    Optional<Reservation> findByCancellationToken(String cancellationToken);
+
+    Optional<Reservation> findByModificationToken(String modificationToken);
+
+    /** Reservations across a set of restaurants — used to scope listings to one organization. */
     List<Reservation> findByRestaurantIdIn(Collection<UUID> restaurantIds);
+
 
     /**
      * Verrou transactionnel par restaurant : deux reservations ecrites au meme instant sur des
@@ -40,7 +113,7 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
     @Query("""
             SELECT tid FROM Reservation r JOIN r.tableIds tid
             WHERE r.restaurantId = :restaurantId
-              AND r.status IN ('pending', 'confirmed', 'seated')
+              AND r.status IN ('awaiting_payment', 'pending', 'confirmed', 'seated')
               AND r.startsAt < :endsAt
               AND r.endsAt > :startsAt
             """)
@@ -66,7 +139,7 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
     @Query("""
             SELECT tid FROM Reservation r JOIN r.tableIds tid
             WHERE r.restaurantId = :restaurantId
-              AND r.status IN ('pending', 'confirmed', 'seated')
+              AND r.status IN ('awaiting_payment', 'pending', 'confirmed', 'seated')
               AND r.id <> :excludeReservationId
               AND r.startsAt < :endsAt
               AND r.endsAt > :startsAt

@@ -39,19 +39,19 @@ class OwnershipIntegrationTest extends AbstractIntegrationTest {
                 ("{\"restaurantId\":\"%s\",\"customerId\":\"%s\",\"tableId\":\"%s\",\"startsAt\":\"2030-01-01T19:00:00Z\","
                         + "\"endsAt\":\"2030-01-01T21:00:00Z\",\"partySize\":2}").formatted(restaurantId, customerId, tableId));
 
-        // Lecture : 403 partout pour Bob, 200 pour Alice.
+        // Lecture : 404 partout pour Bob (non-divulgation), 200 pour Alice.
         mockMvc.perform(get("/api/restaurants/" + restaurantId).header("Authorization", "Bearer " + bob))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         mockMvc.perform(get("/api/tables/" + tableId).header("Authorization", "Bearer " + bob))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         mockMvc.perform(get("/api/customers/" + customerId).header("Authorization", "Bearer " + bob))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         mockMvc.perform(get("/api/reservations/" + reservationId).header("Authorization", "Bearer " + bob))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         mockMvc.perform(get("/api/reservations?restaurantId=" + restaurantId).header("Authorization", "Bearer " + bob))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         mockMvc.perform(get("/api/floor-plans/" + restaurantId).header("Authorization", "Bearer " + bob))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         mockMvc.perform(get("/api/reservations/" + reservationId).header("Authorization", "Bearer " + alice))
                 .andExpect(status().isOk());
 
@@ -59,20 +59,20 @@ class OwnershipIntegrationTest extends AbstractIntegrationTest {
         mockMvc.perform(put("/api/tables/" + tableId).header("Authorization", "Bearer " + bob)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"restaurantId\":\"%s\",\"name\":\"Hack\",\"capacity\":2}".formatted(restaurantId)))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         mockMvc.perform(delete("/api/reservations/" + reservationId).header("Authorization", "Bearer " + bob))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         mockMvc.perform(post("/api/reservations").header("Authorization", "Bearer " + bob)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(("{\"restaurantId\":\"%s\",\"startsAt\":\"2030-01-02T19:00:00Z\","
                         + "\"endsAt\":\"2030-01-02T21:00:00Z\",\"partySize\":2}").formatted(restaurantId)))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         mockMvc.perform(put("/api/floor-plans/" + restaurantId).header("Authorization", "Bearer " + bob)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"layout\":{}}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         mockMvc.perform(delete("/api/restaurants/" + restaurantId).header("Authorization", "Bearer " + bob))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
 
         // Les listes sont bornees a son organisation, quel que soit le parametre.
         mockMvc.perform(get("/api/restaurants?organizationId=" + organizationOf(alice)).header("Authorization", "Bearer " + bob))
@@ -87,7 +87,7 @@ class OwnershipIntegrationTest extends AbstractIntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"organizationId\":\"%s\",\"name\":\"Squat\",\"phoneNumber\":\"+33100000402\"}"
                         .formatted(organizationOf(alice))))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
 
         // Le public, lui, reste public.
         mockMvc.perform(get("/api/public/restaurants/" + restaurantId + "/menu"))

@@ -81,13 +81,26 @@ public class SecurityConfig {
                         // sous /api/public restera protege tant qu'il n'est pas liste ici.
                         .requestMatchers(HttpMethod.GET, "/api/public/restaurants/*/menu",
                                 "/api/public/restaurants/*/menu/files/*").permitAll()
-                        // Payment webhook: unauthenticated, trust is the provider's signed webhook header.
+                        // Payment webhooks: unauthenticated, trust is the provider's signed header.
                         .requestMatchers(HttpMethod.POST, "/api/offers/webhook").permitAll()
-                        // Reservation en ligne : trois routes publiques nommees, jamais de joker /api/public/**.
+                        .requestMatchers(HttpMethod.POST, "/api/payments/webhook").permitAll()
+                        // Reservation en ligne : routes publiques nommees, jamais de joker /api/public/**.
                         .requestMatchers(HttpMethod.GET, "/api/public/restaurants/*/slots",
                                 "/api/public/reservations/*", "/api/public/reservations/*/slots").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/public/restaurants/*/reservations").permitAll()
                         .requestMatchers(HttpMethod.PUT, "/api/public/reservations/*").permitAll()
+                        // Pages destinees au convive : il a reserve par telephone et n'a pas de
+                        // compte, le jeton aleatoire dans l'URL est donc tout le justificatif.
+                        // Routes nommees une a une, pour la meme raison que ci-dessus.
+                        .requestMatchers(HttpMethod.GET, "/api/public/reservations/paiement/*",
+                                "/api/public/reservations/complement/*",
+                                "/api/public/reservations/modifier/*",
+                                "/api/public/reservations/modifier/*/creneaux",
+                                "/api/public/reservations/annulation/*").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/public/reservations/paiement/*/checkout",
+                                "/api/public/reservations/complement/*/checkout",
+                                "/api/public/reservations/annulation/*").permitAll()
+                        .requestMatchers(HttpMethod.PUT, "/api/public/reservations/modifier/*").permitAll()
                         // Call endpoints reserved for the AI microservice (API key).
                         .requestMatchers(HttpMethod.POST, "/api/calls/ingest").hasRole("SERVICE")
                         .requestMatchers(HttpMethod.GET, "/api/calls/context", "/api/calls/availability")
