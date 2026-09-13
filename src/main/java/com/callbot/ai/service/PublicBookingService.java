@@ -245,7 +245,7 @@ public class PublicBookingService {
     }
 
     private static LocalDate lastBookableDay(LocalDate today) {
-        return today.plusDays(BookingPolicy.WINDOW_DAYS - 1L);
+        return BookingPolicy.lastBookableDay(today);
     }
 
     private void requirePartySize(int partySize) {

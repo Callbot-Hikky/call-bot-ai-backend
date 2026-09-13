@@ -4,10 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -20,6 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.callbot.ai.dto.AvailabilityResponse;
 import com.callbot.ai.dto.CallContextResponse;
+import com.callbot.ai.exception.BookingException;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.model.RestaurantHours;
@@ -44,8 +48,12 @@ class CallContextServiceTest {
     private CallContextService callContextService;
 
     private static final String PHONE = "+33100000001";
-    // 2030-03-01 is a Friday; 19:00 UTC is 20:00 in Europe/Paris.
-    private static final OffsetDateTime SLOT = OffsetDateTime.parse("2030-03-01T19:00:00Z");
+    private static final ZoneId PARIS = ZoneId.of("Europe/Paris");
+    // Tomorrow 20:00 Paris: inside the booking window whatever day the tests run.
+    private static final OffsetDateTime SLOT = LocalDate.now(PARIS).plusDays(1)
+            .atTime(20, 0).atZone(PARIS).toOffsetDateTime();
+    // DB convention: 0 = Monday ... 6 = Sunday.
+    private static final short SLOT_DAY = (short) (SLOT.atZoneSameInstant(PARIS).getDayOfWeek().getValue() - 1);
 
     private final UUID restaurantId = UUID.randomUUID();
 
@@ -75,7 +83,7 @@ class CallContextServiceTest {
         when(restaurantRepository.findByPhoneNumber(PHONE)).thenReturn(java.util.Optional.of(restaurant()));
         when(tableRepository.findByRestaurantId(restaurantId)).thenReturn(List.of(table(2), table(6)));
         when(hoursRepository.findByRestaurantId(restaurantId)).thenReturn(List.of(
-                RestaurantHours.builder().dayOfWeek((short) 4).service("dinner")
+                RestaurantHours.builder().dayOfWeek(SLOT_DAY).service("dinner")
                         .opensAt(LocalTime.of(19, 0)).closesAt(LocalTime.of(23, 0)).isClosed(false).build()));
 
         CallContextResponse context = callContextService.context(PHONE);
@@ -211,14 +219,86 @@ class CallContextServiceTest {
     @Test
     void availability_whenRestaurantClosedAtThatTime_refusesWithClosed() {
         when(restaurantRepository.findByPhoneNumber(PHONE)).thenReturn(java.util.Optional.of(restaurant()));
-        // Friday lunch only: the 20:00 Paris slot falls outside opening hours.
+        // Lunch only that day: the 20:00 Paris slot falls outside opening hours.
         when(hoursRepository.findByRestaurantId(restaurantId)).thenReturn(List.of(
-                RestaurantHours.builder().dayOfWeek((short) 4).service("lunch")
+                RestaurantHours.builder().dayOfWeek(SLOT_DAY).service("lunch")
                         .opensAt(LocalTime.of(12, 0)).closesAt(LocalTime.of(14, 30)).isClosed(false).build()));
 
         AvailabilityResponse response = callContextService.availability(PHONE, SLOT, null, 2);
 
         assertThat(response.available()).isFalse();
         assertThat(response.reason()).isEqualTo("closed");
+    }
+
+    @Test
+    void availability_whenSlotInThePast_refusesWithPast_andQueriesNothing() {
+        when(restaurantRepository.findByPhoneNumber(PHONE)).thenReturn(java.util.Optional.of(restaurant()));
+
+        AvailabilityResponse response = callContextService.availability(PHONE,
+                OffsetDateTime.now(PARIS).minusHours(2), null, 2);
+
+        assertThat(response.available()).isFalse();
+        assertThat(response.reason()).isEqualTo("past");
+        assertThat(response.alternatives()).isEmpty();
+        verifyNoInteractions(tableRepository, reservationRepository);
+    }
+
+    @Test
+    void availability_aFewMinutesAgo_isStillAccepted() {
+        // Asked at 20:02 for "20:00": within tolerance.
+        RestaurantTable free = table(4);
+        when(restaurantRepository.findByPhoneNumber(PHONE)).thenReturn(java.util.Optional.of(restaurant()));
+        when(hoursRepository.findByRestaurantId(restaurantId)).thenReturn(List.of());
+        when(tableRepository.findByRestaurantId(restaurantId)).thenReturn(List.of(free));
+        when(reservationRepository.findBusyTableIds(eq(restaurantId), any(), any())).thenReturn(List.of());
+
+        AvailabilityResponse response = callContextService.availability(PHONE,
+                OffsetDateTime.now(PARIS).minusMinutes(2), null, 2);
+
+        assertThat(response.available()).isTrue();
+    }
+
+    @Test
+    void availability_beyondBookingWindow_refusesWithTooFar() {
+        when(restaurantRepository.findByPhoneNumber(PHONE)).thenReturn(java.util.Optional.of(restaurant()));
+        OffsetDateTime dayAfterWindow = LocalDate.now(PARIS).plusDays(BookingPolicy.WINDOW_DAYS)
+                .atTime(20, 0).atZone(PARIS).toOffsetDateTime();
+
+        AvailabilityResponse response = callContextService.availability(PHONE, dayAfterWindow, null, 2);
+
+        assertThat(response.available()).isFalse();
+        assertThat(response.reason()).isEqualTo("too_far");
+        verifyNoInteractions(tableRepository, reservationRepository);
+    }
+
+    @Test
+    void availability_lastDayOfWindow_isStillAccepted() {
+        RestaurantTable free = table(4);
+        when(restaurantRepository.findByPhoneNumber(PHONE)).thenReturn(java.util.Optional.of(restaurant()));
+        when(hoursRepository.findByRestaurantId(restaurantId)).thenReturn(List.of());
+        when(tableRepository.findByRestaurantId(restaurantId)).thenReturn(List.of(free));
+        when(reservationRepository.findBusyTableIds(eq(restaurantId), any(), any())).thenReturn(List.of());
+        OffsetDateTime lastDay = LocalDate.now(PARIS).plusDays(BookingPolicy.WINDOW_DAYS - 1L)
+                .atTime(20, 0).atZone(PARIS).toOffsetDateTime();
+
+        assertThat(callContextService.availability(PHONE, lastDay, null, 2).available()).isTrue();
+    }
+
+    @Test
+    void availability_whenEndBeforeStart_isABadRequest() {
+        when(restaurantRepository.findByPhoneNumber(PHONE)).thenReturn(java.util.Optional.of(restaurant()));
+
+        assertThatThrownBy(() -> callContextService.availability(PHONE, SLOT, SLOT.minusHours(1), 2))
+                .isInstanceOf(BookingException.class)
+                .extracting("code").isEqualTo("invalid_range");
+    }
+
+    @Test
+    void availability_whenDurationAbsurd_isABadRequest() {
+        when(restaurantRepository.findByPhoneNumber(PHONE)).thenReturn(java.util.Optional.of(restaurant()));
+
+        assertThatThrownBy(() -> callContextService.availability(PHONE, SLOT, SLOT.plusHours(9), 2))
+                .isInstanceOf(BookingException.class)
+                .extracting("code").isEqualTo("invalid_duration");
     }
 }
