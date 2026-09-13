@@ -69,6 +69,7 @@ public class ReservationService {
 
     public ReservationResponse create(ReservationRequest request, String callerEmail) {
         Restaurant restaurant = scope.ownedRestaurant(request.restaurantId(), callerEmail);
+        reservationRepository.lockRestaurant(request.restaurantId());
         Reservation reservation = Reservation.builder()
                 .restaurantId(request.restaurantId())
                 .customerId(request.customerId())
@@ -89,6 +90,16 @@ public class ReservationService {
         Reservation saved = reservationRepository.save(reservation);
         events.publishEvent(new ReservationCreatedEvent(saved.getId()));
         return ReservationResponse.from(saved);
+    }
+
+    /** Les restaurants de l'organisation seulement : le filtre est en base, pas en memoire. */
+    @Transactional(readOnly = true)
+    public List<ReservationResponse> listOwned(Set<UUID> restaurantIds, Set<String> expand) {
+        if (restaurantIds.isEmpty()) {
+            return List.of();
+        }
+        return reservationRepository.findByRestaurantIdIn(restaurantIds).stream()
+                .map(r -> toResponse(r, expand)).toList();
     }
 
     @Transactional(readOnly = true)
@@ -128,6 +139,7 @@ public class ReservationService {
      */
     public ReservationResponse update(UUID id, ReservationRequest request, boolean notify, String callerEmail) {
         Reservation reservation = find(id, callerEmail);
+        reservationRepository.lockRestaurant(reservation.getRestaurantId());
         // Before anything is written: a change in covers goes through the rule. It weighs
         // the requested slot, since that is the slot the reservation will occupy.
         PartySizeChange verdict = partySizeChangePolicy.decide(
@@ -232,7 +244,26 @@ public class ReservationService {
         } else {
             partySize = 1;
         }
+        return slotsFor(restaurant, start, partySize, duration, reservation.getId());
+    }
 
+    /**
+     * Creneaux libres sur {@link BookingPolicy#WINDOW_DAYS} jours a partir de {@code from},
+     * pour {@code partySize} couverts et une duree donnee. Meme algorithme pour la
+     * replanification (qui exclut sa propre reservation) et la reservation en ligne (aucune
+     * exclusion) : tables actives d'une capacite suffisante, la plus petite d'abord.
+     */
+    @Transactional(readOnly = true)
+    public RescheduleSlotsResponse slotsFor(Restaurant restaurant, LocalDate from, int partySize,
+            Duration duration, UUID excludeReservationId) {
+        return slotsFor(restaurant, from, BookingPolicy.WINDOW_DAYS, partySize, duration, excludeReservationId);
+    }
+
+    /** Meme calcul sur {@code dayCount} jours : la creation en ligne ne verifie que le jour demande. */
+    @Transactional(readOnly = true)
+    public RescheduleSlotsResponse slotsFor(Restaurant restaurant, LocalDate from, int dayCount, int partySize,
+            Duration duration, UUID excludeReservationId) {
+        ZoneId zone = ZoneId.of(restaurant.getTimezone());
         List<RestaurantHours> hours = hoursRepository.findByRestaurantId(restaurant.getId());
         List<RestaurantTable> candidates = tableRepository.findByRestaurantId(restaurant.getId()).stream()
                 .filter(t -> Boolean.TRUE.equals(t.getIsActive()))
@@ -240,12 +271,11 @@ public class ReservationService {
                 .sorted(Comparator.comparing(RestaurantTable::getCapacity))
                 .toList();
 
-        List<RescheduleSlotsResponse.Day> days = new ArrayList<>(7);
-        for (int i = 0; i < 7; i++) {
-            LocalDate date = start.plusDays(i);
+        List<RescheduleSlotsResponse.Day> days = new ArrayList<>(dayCount);
+        for (int i = 0; i < dayCount; i++) {
+            LocalDate date = from.plusDays(i);
             days.add(new RescheduleSlotsResponse.Day(date,
-                    slotsForDay(restaurant, zone, hours, candidates, date, duration,
-                            reservation.getId())));
+                    slotsForDay(restaurant, zone, hours, candidates, date, duration, excludeReservationId)));
         }
         return new RescheduleSlotsResponse(days);
     }
@@ -318,8 +348,11 @@ public class ReservationService {
         if (candidates.isEmpty()) {
             return null;
         }
-        Set<UUID> busy = new HashSet<>(reservationRepository.findBusyTableIdsExcluding(
-                restaurantId, startsAt, endsAt, excludeReservationId));
+        // Sans reservation a exclure, la requete « excluant » comparerait a NULL et ne
+        // renverrait rien : toutes les tables paraitraient libres.
+        Set<UUID> busy = new HashSet<>(excludeReservationId == null
+                ? reservationRepository.findBusyTableIds(restaurantId, startsAt, endsAt)
+                : reservationRepository.findBusyTableIdsExcluding(restaurantId, startsAt, endsAt, excludeReservationId));
         return candidates.stream()
                 .filter(t -> !busy.contains(t.getId()))
                 .findFirst()

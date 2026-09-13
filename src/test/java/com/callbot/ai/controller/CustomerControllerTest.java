@@ -25,6 +25,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.callbot.ai.dto.CustomerResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.security.JwtAuthenticationFilter;
+import com.callbot.ai.security.RestaurantAccess;
 import com.callbot.ai.security.ServiceApiKeyFilter;
 import com.callbot.ai.service.CustomerService;
 
@@ -40,6 +41,8 @@ class CustomerControllerTest {
 
     @MockitoBean
     private CustomerService customerService;
+    @MockitoBean
+    private RestaurantAccess restaurantAccess;
 
     private CustomerResponse sample() {
         return new CustomerResponse(UUID.randomUUID(), UUID.randomUUID(), "+33600000000",
@@ -49,7 +52,7 @@ class CustomerControllerTest {
 
     @Test
     void create_withValidPayload_returns201() throws Exception {
-        when(customerService.create(any(), any())).thenReturn(sample());
+        when(customerService.create(any())).thenReturn(sample());
 
         mockMvc.perform(post("/api/customers")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -61,9 +64,9 @@ class CustomerControllerTest {
 
     @Test
     void create_whenRaceConflict_reReadsWinner() throws Exception {
-        when(customerService.create(any(), any()))
+        when(customerService.create(any()))
                 .thenThrow(new DataIntegrityViolationException("duplicate phone"));
-        when(customerService.findByPhone(any(), any(), any())).thenReturn(sample());
+        when(customerService.findByPhone(any(), any())).thenReturn(sample());
 
         mockMvc.perform(post("/api/customers")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -84,7 +87,7 @@ class CustomerControllerTest {
 
     @Test
     void get_returns200() throws Exception {
-        when(customerService.get(any(), any())).thenReturn(sample());
+        when(customerService.get(any())).thenReturn(sample());
 
         mockMvc.perform(get("/api/customers/" + UUID.randomUUID()))
                 .andExpect(status().isOk())
@@ -93,7 +96,7 @@ class CustomerControllerTest {
 
     @Test
     void get_whenNotFound_returns404() throws Exception {
-        when(customerService.get(any(), any()))
+        when(customerService.get(any()))
                 .thenThrow(new ResourceNotFoundException("Customer", UUID.randomUUID()));
 
         mockMvc.perform(get("/api/customers/" + UUID.randomUUID()))
@@ -102,6 +105,8 @@ class CustomerControllerTest {
 
     @Test
     void delete_returns204() throws Exception {
+        // La propriete se verifie sur la fiche existante : le service doit la renvoyer.
+        when(customerService.get(any())).thenReturn(sample());
         mockMvc.perform(delete("/api/customers/" + UUID.randomUUID()))
                 .andExpect(status().isNoContent());
     }

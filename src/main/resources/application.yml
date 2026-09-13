@@ -19,6 +19,9 @@ spring:
   flyway:
     enabled: true
     baseline-on-migrate: true
+    # Des branches paralleles peuvent fusionner dans le desordre (offres, menu) :
+    # une version plus basse arrivee apres une plus haute s'applique quand meme.
+    out-of-order: true
 
 server:
   port: ${SERVER_PORT:8080}

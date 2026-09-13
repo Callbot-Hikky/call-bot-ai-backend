@@ -29,6 +29,8 @@ import com.callbot.ai.service.NoShowService;
 import com.callbot.ai.service.ReservationService;
 
 import jakarta.validation.Valid;
+import org.springframework.security.core.Authentication;
+import com.callbot.ai.security.RestaurantAccess;
 import lombok.RequiredArgsConstructor;
 
 @RestController
@@ -37,27 +39,32 @@ import lombok.RequiredArgsConstructor;
 public class ReservationController {
 
     private final ReservationService reservationService;
+    private final RestaurantAccess restaurantAccess;
     private final NoShowService noShowService;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public ReservationResponse create(@Valid @RequestBody ReservationRequest request,
-            Authentication authentication) {
+    public ReservationResponse create(@Valid @RequestBody ReservationRequest request, Authentication authentication) {
+        restaurantAccess.requireOwned(request.restaurantId(), authentication);
         return reservationService.create(request, AuthenticatedCaller.emailOf(authentication));
     }
 
     @GetMapping
     public List<ReservationResponse> list(@RequestParam(required = false) UUID restaurantId,
-            @RequestParam(required = false) String expand,
-            Authentication authentication) {
-        return reservationService.list(restaurantId, parseExpand(expand), AuthenticatedCaller.emailOf(authentication));
+            @RequestParam(required = false) String expand, Authentication authentication) {
+        if (restaurantId != null) {
+            restaurantAccess.requireOwned(restaurantId, authentication);
+            return reservationService.list(restaurantId, parseExpand(expand), AuthenticatedCaller.emailOf(authentication));
+        }
+        return reservationService.listOwned(restaurantAccess.ownedRestaurantIds(authentication), parseExpand(expand));
     }
 
     @GetMapping("/{id}")
     public ReservationResponse get(@PathVariable UUID id,
-            @RequestParam(required = false) String expand,
-            Authentication authentication) {
-        return reservationService.get(id, parseExpand(expand), AuthenticatedCaller.emailOf(authentication));
+            @RequestParam(required = false) String expand, Authentication authentication) {
+        ReservationResponse reservation = reservationService.get(id, parseExpand(expand), AuthenticatedCaller.emailOf(authentication));
+        restaurantAccess.requireOwned(reservation.restaurantId(), authentication);
+        return reservation;
     }
 
     /** Slots free for rescheduling this reservation over a 7-day window (defaults to today).
@@ -67,8 +74,8 @@ public class ReservationController {
     public RescheduleSlotsResponse rescheduleSlots(@PathVariable UUID id,
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
-            @RequestParam(required = false) Integer partySize,
-            Authentication authentication) {
+            @RequestParam(required = false) Integer partySize, Authentication authentication) {
+        restaurantAccess.requireOwned(reservationService.get(id, Set.of(), AuthenticatedCaller.emailOf(authentication)).restaurantId(), authentication);
         return reservationService.rescheduleSlots(id, fromDate, partySize, AuthenticatedCaller.emailOf(authentication));
     }
 
@@ -90,8 +97,9 @@ public class ReservationController {
     @PutMapping("/{id}")
     public ReservationResponse update(@PathVariable UUID id,
             @Valid @RequestBody ReservationRequest request,
-            @RequestParam(defaultValue = "false") boolean notify,
-            Authentication authentication) {
+            @RequestParam(defaultValue = "false") boolean notify, Authentication authentication) {
+        restaurantAccess.requireOwned(reservationService.get(id, Set.of(), AuthenticatedCaller.emailOf(authentication)).restaurantId(), authentication);
+        restaurantAccess.requireOwned(request.restaurantId(), authentication);
         return reservationService.update(id, request, notify, AuthenticatedCaller.emailOf(authentication));
     }
 
@@ -113,6 +121,7 @@ public class ReservationController {
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable UUID id, Authentication authentication) {
+        restaurantAccess.requireOwned(reservationService.get(id, Set.of(), AuthenticatedCaller.emailOf(authentication)).restaurantId(), authentication);
         reservationService.delete(id, AuthenticatedCaller.emailOf(authentication));
     }
 }

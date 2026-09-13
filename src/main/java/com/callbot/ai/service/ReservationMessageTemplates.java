@@ -14,6 +14,8 @@ import com.callbot.ai.model.Customer;
 import com.callbot.ai.model.Reservation;
 import com.callbot.ai.model.ReservationCharge;
 import com.callbot.ai.model.Restaurant;
+import com.callbot.ai.model.RestaurantMenu;
+import com.callbot.ai.repository.RestaurantMenuRepository;
 
 @Component
 public class ReservationMessageTemplates {
@@ -23,9 +25,11 @@ public class ReservationMessageTemplates {
     private static final ZoneId FALLBACK_ZONE = ZoneId.of("Europe/Paris");
 
     private final FrontendProperties frontend;
+    private final RestaurantMenuRepository menuRepository;
 
-    public ReservationMessageTemplates(FrontendProperties frontend) {
+    public ReservationMessageTemplates(FrontendProperties frontend, RestaurantMenuRepository menuRepository) {
         this.frontend = frontend;
+        this.menuRepository = menuRepository;
     }
 
     public String forClient(Reservation reservation, Customer customer, Restaurant restaurant) {
@@ -36,6 +40,7 @@ public class ReservationMessageTemplates {
         String address = formatAddress(restaurant);
         String phone = formatPhoneLink(restaurant.getPhoneNumber());
         String modificationLink = buildModificationLink(reservation);
+        String menuLine = buildMenuLine(reservation, restaurant);
 
         return """
                 %s,
@@ -45,11 +50,12 @@ public class ReservationMessageTemplates {
                 **Nombre de personnes** : %d
                 **Adresse** : %s
                 **Téléphone** : %s
-
+                %s
                 -# Un imprévu, ou notre assistant s'est trompé ? [Modifier ma réservation](%s)
 
                 À très vite !"""
-                .formatted(greeting, restaurant.getName(), when, reservation.getPartySize(), address, phone, modificationLink);
+                .formatted(greeting, restaurant.getName(), when, reservation.getPartySize(), address, phone,
+                        menuLine, modificationLink);
     }
 
     /**
@@ -561,6 +567,7 @@ public class ReservationMessageTemplates {
         String address = formatAddress(restaurant);
         String phone = formatPhoneLink(restaurant.getPhoneNumber());
         String modificationLink = buildModificationLink(reservation);
+        String menuLine = buildMenuLine(reservation, restaurant);
 
         return """
                 %s,
@@ -570,11 +577,12 @@ public class ReservationMessageTemplates {
                 **Nombre de personnes** : %d
                 **Adresse** : %s
                 **Téléphone** : %s
-
+                %s
                 -# Besoin de changer à nouveau ? [Modifier ma réservation](%s)
 
                 À très vite !"""
-                .formatted(greeting, restaurant.getName(), when, reservation.getPartySize(), address, phone, modificationLink);
+                .formatted(greeting, restaurant.getName(), when, reservation.getPartySize(), address, phone,
+                        menuLine, modificationLink);
     }
 
     public String forRestaurant(Reservation reservation, Customer customer, Restaurant restaurant) {
@@ -698,6 +706,22 @@ public class ReservationMessageTemplates {
      */
     private String buildModificationLink(Reservation reservation) {
         return baseUrl() + "/client/reservations/modifier/" + reservation.getModificationToken();
+    }
+
+    /**
+     * Ligne « Voir le menu », seulement si le restaurant a publie une carte. Le lien
+     * porte l'identifiant de la reservation pour que la page propose d'y revenir.
+     * Rendue comme un paragraphe a part : vide, elle n'ajoute qu'une ligne blanche.
+     */
+    private String buildMenuLine(Reservation reservation, Restaurant restaurant) {
+        boolean published = menuRepository.findById(restaurant.getId())
+                .map(menu -> !RestaurantMenu.MODE_NONE.equals(menu.getMode()))
+                .orElse(false);
+        if (!published) {
+            return "";
+        }
+        return "\n-# Envie de découvrir la carte ? [Voir le menu](" + baseUrl()
+                + "/client/restaurants/" + restaurant.getId() + "/menu?reservation=" + reservation.getPublicToken() + ")\n";
     }
 
     private String baseUrl() {

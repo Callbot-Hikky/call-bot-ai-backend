@@ -25,6 +25,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.callbot.ai.dto.FloorPlanResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.security.JwtAuthenticationFilter;
+import com.callbot.ai.security.RestaurantAccess;
 import com.callbot.ai.security.ServiceApiKeyFilter;
 import com.callbot.ai.service.FloorPlanService;
 import tools.jackson.databind.ObjectMapper;
@@ -41,6 +42,8 @@ class FloorPlanControllerTest {
 
     @MockitoBean
     private FloorPlanService floorPlanService;
+    @MockitoBean
+    private RestaurantAccess restaurantAccess;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 

@@ -21,10 +21,10 @@ import org.testcontainers.utility.DockerImageName;
 /**
  * Proves that no line of money is lost when the singular columns become a register.
  *
- * <p>The other integration tests migrate an empty schema, so the backfill in V18 never
- * sees a row there and could be silently wrong. This one stops at V17, writes the
+ * <p>The other integration tests migrate an empty schema, so the backfill in V26 never
+ * sees a row there and could be silently wrong. This one stops at V25, writes the
  * reservations a live database would hold — paid, refunded, already paid out, penalised,
- * and one whose checkout was only ever opened — then runs V18 over them.
+ * and one whose checkout was only ever opened — then runs V26 over them.
  *
  * <p>It uses its own container: the shared one is migrated to head before any test runs,
  * and there is no going back from that.
@@ -103,7 +103,7 @@ class ChargeRegisterMigrationTest {
 
     @Test
     void everyLineOfMoneySurvivesTheMoveIntoTheRegister() {
-        flywayUpTo("17").migrate();
+        flywayUpTo("25").migrate();
 
         execute("""
                 INSERT INTO organizations (id, name) VALUES
@@ -164,7 +164,7 @@ class ChargeRegisterMigrationTest {
         // A free reservation: nothing to carry over at all.
         insertReservation("free", "guarantee_mode = 'none', guarantee_status = 'not_required'");
 
-        flywayUpTo("18").migrate();
+        flywayUpTo("26").migrate();
 
         // Five money lines in, five out — the free reservation brings none.
         assertThat(countCharges()).isEqualTo(5);

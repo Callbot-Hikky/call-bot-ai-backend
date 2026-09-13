@@ -10,7 +10,7 @@ import com.callbot.ai.model.Restaurant;
 /**
  * What an account-less diner is shown behind a top-up link.
  *
- * <p>As narrow as {@link PublicReservationResponse}, and for the same reason. It shows
+ * <p>As narrow as {@link PublicReservationPaymentResponse}, and for the same reason. It shows
  * both party sizes rather than only the larger one: the diner is buying the difference,
  * and a page that only said "6 couverts" would read as though the change had already
  * happened.

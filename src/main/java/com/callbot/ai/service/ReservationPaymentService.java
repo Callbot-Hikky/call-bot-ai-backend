@@ -13,7 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.callbot.ai.dto.CancellationResponse;
 import com.callbot.ai.dto.PaymentRedirectResponse;
-import com.callbot.ai.dto.PublicReservationResponse;
+import com.callbot.ai.dto.PublicReservationPaymentResponse;
 import com.callbot.ai.exception.InvalidRequestException;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.gateway.CheckoutSession;
@@ -72,15 +72,15 @@ public class ReservationPaymentService {
     private final ApplicationEventPublisher events;
 
     @Transactional(readOnly = true)
-    public PublicReservationResponse describe(String paymentToken) {
+    public PublicReservationPaymentResponse describe(String paymentToken) {
         Reservation reservation = byPaymentToken(paymentToken);
-        return PublicReservationResponse.of(reservation, restaurantOf(reservation));
+        return PublicReservationPaymentResponse.of(reservation, restaurantOf(reservation));
     }
 
     @Transactional(readOnly = true)
-    public PublicReservationResponse describeCancellable(String cancellationToken) {
+    public PublicReservationPaymentResponse describeCancellable(String cancellationToken) {
         Reservation reservation = byCancellationToken(cancellationToken);
-        return PublicReservationResponse.of(reservation, restaurantOf(reservation));
+        return PublicReservationPaymentResponse.of(reservation, restaurantOf(reservation));
     }
 
     /**

@@ -17,7 +17,7 @@ import com.callbot.ai.dto.GuestModificationRequest;
 import com.callbot.ai.dto.GuestModificationResponse;
 import com.callbot.ai.dto.PaymentRedirectResponse;
 import com.callbot.ai.dto.PublicModificationResponse;
-import com.callbot.ai.dto.PublicReservationResponse;
+import com.callbot.ai.dto.PublicReservationPaymentResponse;
 import com.callbot.ai.dto.PublicTopUpResponse;
 import com.callbot.ai.dto.RescheduleSlotsResponse;
 import com.callbot.ai.service.PartySizeTopUpService;
@@ -46,7 +46,7 @@ public class PublicReservationController {
     private final ReservationModificationService modifications;
 
     @GetMapping("/paiement/{paymentToken}")
-    public PublicReservationResponse describe(@PathVariable String paymentToken) {
+    public PublicReservationPaymentResponse describe(@PathVariable String paymentToken) {
         return payments.describe(paymentToken);
     }
 
@@ -100,7 +100,7 @@ public class PublicReservationController {
     }
 
     @GetMapping("/annulation/{cancellationToken}")
-    public PublicReservationResponse describeCancellable(@PathVariable String cancellationToken) {
+    public PublicReservationPaymentResponse describeCancellable(@PathVariable String cancellationToken) {
         return payments.describeCancellable(cancellationToken);
     }
 

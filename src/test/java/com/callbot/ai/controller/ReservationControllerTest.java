@@ -24,6 +24,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.callbot.ai.dto.ReservationResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.security.JwtAuthenticationFilter;
+import com.callbot.ai.security.RestaurantAccess;
 import com.callbot.ai.security.ServiceApiKeyFilter;
 import com.callbot.ai.service.NoShowService;
 import com.callbot.ai.service.ReservationService;
@@ -42,6 +43,9 @@ class ReservationControllerTest {
     private ReservationService reservationService;
     @MockitoBean
     private NoShowService noShowService;
+
+    @MockitoBean
+    private RestaurantAccess restaurantAccess;
 
     private ReservationResponse sample() {
         return new ReservationResponse(UUID.randomUUID(), UUID.randomUUID(), null, null, null, null,
@@ -94,6 +98,8 @@ class ReservationControllerTest {
 
     @Test
     void delete_returns204() throws Exception {
+        // La propriete se verifie sur la fiche existante : le service doit la renvoyer.
+        when(reservationService.get(any(), any(), any())).thenReturn(sample());
         mockMvc.perform(delete("/api/reservations/" + UUID.randomUUID()))
                 .andExpect(status().isNoContent());
     }
