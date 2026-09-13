@@ -61,7 +61,17 @@ CREATE UNIQUE INDEX idx_reservations_cancellation_token
 -- 3. Nouveau statut « pré-tenue » --------------------------------------------
 -- 'awaiting_payment' ne tient pas dans VARCHAR(16).
 
+-- Le trigger de V16 liste `status` dans son AFTER UPDATE OF : Postgres refuse de
+-- changer le type d'une colonne citee par un trigger. On le depose et on le recree
+-- a l'identique autour de l'ALTER.
+DROP TRIGGER IF EXISTS trg_reservations_move_no_overlap ON reservations;
+
 ALTER TABLE reservations ALTER COLUMN status TYPE VARCHAR(32);
+
+CREATE CONSTRAINT TRIGGER trg_reservations_move_no_overlap
+    AFTER UPDATE OF starts_at, ends_at, status ON reservations
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION reservations_check_move_overlap();
 
 ALTER TABLE reservations DROP CONSTRAINT chk_reservations_status;
 ALTER TABLE reservations ADD CONSTRAINT chk_reservations_status

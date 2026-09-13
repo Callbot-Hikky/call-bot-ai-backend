@@ -19,6 +19,12 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.DelegatingRequestMatcherHeaderWriter;
+import org.springframework.security.web.header.writers.StaticHeadersWriter;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
+import org.springframework.security.web.util.matcher.NegatedRequestMatcher;
+import org.springframework.security.web.util.matcher.OrRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -39,6 +45,13 @@ public class SecurityConfig {
             "/actuator/health"
     };
 
+    /** Fichiers de menu servis en binaire, admin et publics (voir MenuFileHttp). */
+    private static final RequestMatcher MENU_FILE_URLS = new OrRequestMatcher(
+            PathPatternRequestMatcher.withDefaults()
+                    .matcher(HttpMethod.GET, "/api/restaurants/*/menu/files/*"),
+            PathPatternRequestMatcher.withDefaults()
+                    .matcher(HttpMethod.GET, "/api/public/restaurants/*/menu/files/*"));
+
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final ServiceApiKeyFilter serviceApiKeyFilter;
     private final CorsProperties corsProperties;
@@ -51,14 +64,43 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(handling -> handling
                         .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
+                // DENY partout, sauf les fichiers de menu (PDF, images) que nos propres pages
+                // affichent dans un cadre : meme origine seulement.
+                .headers(headers -> headers
+                        .frameOptions(frame -> frame.disable())
+                        .addHeaderWriter(new DelegatingRequestMatcherHeaderWriter(
+                                MENU_FILE_URLS,
+                                new StaticHeadersWriter("X-Frame-Options", "SAMEORIGIN")))
+                        .addHeaderWriter(new DelegatingRequestMatcherHeaderWriter(
+                                new NegatedRequestMatcher(MENU_FILE_URLS),
+                                new StaticHeadersWriter("X-Frame-Options", "DENY"))))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
+                        // Lecture publique du menu (lien dans le message de confirmation, QR code).
+                        // Seules les deux URL publiques du menu sont anonymes : un futur controleur
+                        // sous /api/public restera protege tant qu'il n'est pas liste ici.
+                        .requestMatchers(HttpMethod.GET, "/api/public/restaurants/*/menu",
+                                "/api/public/restaurants/*/menu/files/*").permitAll()
                         // Payment webhooks: unauthenticated, trust is the provider's signed header.
                         .requestMatchers(HttpMethod.POST, "/api/offers/webhook").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/payments/webhook").permitAll()
-                        // Diner-facing pages: the caller booked by telephone and has no
-                        // account, so the random token in the URL is the whole credential.
-                        .requestMatchers("/api/public/reservations/**").permitAll()
+                        // Reservation en ligne : routes publiques nommees, jamais de joker /api/public/**.
+                        .requestMatchers(HttpMethod.GET, "/api/public/restaurants/*/slots",
+                                "/api/public/reservations/*", "/api/public/reservations/*/slots").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/public/restaurants/*/reservations").permitAll()
+                        .requestMatchers(HttpMethod.PUT, "/api/public/reservations/*").permitAll()
+                        // Pages destinees au convive : il a reserve par telephone et n'a pas de
+                        // compte, le jeton aleatoire dans l'URL est donc tout le justificatif.
+                        // Routes nommees une a une, pour la meme raison que ci-dessus.
+                        .requestMatchers(HttpMethod.GET, "/api/public/reservations/paiement/*",
+                                "/api/public/reservations/complement/*",
+                                "/api/public/reservations/modifier/*",
+                                "/api/public/reservations/modifier/*/creneaux",
+                                "/api/public/reservations/annulation/*").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/public/reservations/paiement/*/checkout",
+                                "/api/public/reservations/complement/*/checkout",
+                                "/api/public/reservations/annulation/*").permitAll()
+                        .requestMatchers(HttpMethod.PUT, "/api/public/reservations/modifier/*").permitAll()
                         // Call endpoints reserved for the AI microservice (API key).
                         .requestMatchers(HttpMethod.POST, "/api/calls/ingest").hasRole("SERVICE")
                         .requestMatchers(HttpMethod.GET, "/api/calls/context", "/api/calls/availability")

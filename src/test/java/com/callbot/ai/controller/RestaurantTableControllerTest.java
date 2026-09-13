@@ -24,6 +24,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.callbot.ai.dto.RestaurantTableResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.security.JwtAuthenticationFilter;
+import com.callbot.ai.security.RestaurantAccess;
 import com.callbot.ai.security.ServiceApiKeyFilter;
 import com.callbot.ai.service.RestaurantTableService;
 
@@ -39,6 +40,8 @@ class RestaurantTableControllerTest {
 
     @MockitoBean
     private RestaurantTableService tableService;
+    @MockitoBean
+    private RestaurantAccess restaurantAccess;
 
     private RestaurantTableResponse sample() {
         return new RestaurantTableResponse(UUID.randomUUID(), UUID.randomUUID(), "T1", 4,
@@ -47,7 +50,7 @@ class RestaurantTableControllerTest {
 
     @Test
     void create_withValidPayload_returns201() throws Exception {
-        when(tableService.create(any(), any())).thenReturn(sample());
+        when(tableService.create(any())).thenReturn(sample());
 
         mockMvc.perform(post("/api/tables")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -68,7 +71,7 @@ class RestaurantTableControllerTest {
 
     @Test
     void get_returns200() throws Exception {
-        when(tableService.get(any(), any())).thenReturn(sample());
+        when(tableService.get(any())).thenReturn(sample());
 
         mockMvc.perform(get("/api/tables/" + UUID.randomUUID()))
                 .andExpect(status().isOk())
@@ -77,7 +80,7 @@ class RestaurantTableControllerTest {
 
     @Test
     void get_whenNotFound_returns404() throws Exception {
-        when(tableService.get(any(), any()))
+        when(tableService.get(any()))
                 .thenThrow(new ResourceNotFoundException("Table", UUID.randomUUID()));
 
         mockMvc.perform(get("/api/tables/" + UUID.randomUUID()))
@@ -86,6 +89,8 @@ class RestaurantTableControllerTest {
 
     @Test
     void delete_returns204() throws Exception {
+        // La propriete se verifie sur la fiche existante : le service doit la renvoyer.
+        when(tableService.get(any())).thenReturn(sample());
         mockMvc.perform(delete("/api/tables/" + UUID.randomUUID()))
                 .andExpect(status().isNoContent());
     }

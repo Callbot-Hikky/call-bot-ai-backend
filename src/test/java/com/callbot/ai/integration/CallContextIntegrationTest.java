@@ -147,4 +147,6 @@ class CallContextIntegrationTest extends AbstractIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         return JsonPath.read(response, "$.accessToken");
     }
+
+    /** L'organisation creee a l'inscription : la seule sur laquelle l'utilisateur peut agir. */
 }

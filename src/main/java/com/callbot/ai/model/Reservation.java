@@ -193,6 +193,11 @@ public class Reservation {
     // no_show_penalty in the register. Only the retry state stays here: when the debit
     // becomes due and how many times it has been tried are scheduling, not money.
 
+    /** Secret des routes publiques : jamais expose par l'API admin, genere par la base. */
+    @Builder.Default
+    @Column(name = "public_token", nullable = false, updatable = false)
+    private UUID publicToken = UUID.randomUUID();
+
     @PrePersist
     void onCreate() {
         OffsetDateTime now = OffsetDateTime.now();

@@ -27,6 +27,8 @@ import com.callbot.ai.service.GuaranteeSettingsService;
 import com.callbot.ai.service.RestaurantService;
 
 import jakarta.validation.Valid;
+import org.springframework.security.core.Authentication;
+import com.callbot.ai.security.RestaurantAccess;
 import lombok.RequiredArgsConstructor;
 
 @RestController
@@ -35,43 +37,49 @@ import lombok.RequiredArgsConstructor;
 public class RestaurantController {
 
     private final RestaurantService restaurantService;
+    private final RestaurantAccess restaurantAccess;
     private final GuaranteeSettingsService guaranteeSettingsService;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public RestaurantResponse create(@Valid @RequestBody RestaurantRequest request,
-            Authentication authentication) {
+    public RestaurantResponse create(@Valid @RequestBody RestaurantRequest request, Authentication authentication) {
+        restaurantAccess.requireOrganization(request.organizationId(), authentication);
         return restaurantService.create(request, AuthenticatedCaller.emailOf(authentication));
     }
 
     @GetMapping
     public List<RestaurantResponse> list(@RequestParam(required = false) UUID organizationId,
             Authentication authentication) {
-        return restaurantService.list(organizationId, AuthenticatedCaller.emailOf(authentication));
+        // Toujours l'organisation de l'utilisateur : le parametre ne sert qu'a la compatibilite.
+        return restaurantService.list(restaurantAccess.organizationOf(authentication), AuthenticatedCaller.emailOf(authentication));
     }
 
     @GetMapping("/{id}")
     public RestaurantResponse get(@PathVariable UUID id, Authentication authentication) {
+        restaurantAccess.requireOwned(id, authentication);
         return restaurantService.get(id, AuthenticatedCaller.emailOf(authentication));
     }
 
     @PutMapping("/{id}")
-    public RestaurantResponse update(@PathVariable UUID id,
-            @Valid @RequestBody RestaurantRequest request, Authentication authentication) {
+    public RestaurantResponse update(@PathVariable UUID id, @Valid @RequestBody RestaurantRequest request,
+            Authentication authentication) {
+        restaurantAccess.requireOwned(id, authentication);
+        restaurantAccess.requireOrganization(request.organizationId(), authentication);
         return restaurantService.update(id, request, AuthenticatedCaller.emailOf(authentication));
     }
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable UUID id, Authentication authentication) {
+        restaurantAccess.requireOwned(id, authentication);
         restaurantService.delete(id, AuthenticatedCaller.emailOf(authentication));
     }
 
     @PatchMapping("/{id}/attributes")
-    public RestaurantResponse updateAttributes(@PathVariable UUID id,
-            @RequestBody Map<String, Object> attributes, Authentication authentication) {
-        return restaurantService.updateAttributes(id, attributes,
-                AuthenticatedCaller.emailOf(authentication));
+    public RestaurantResponse updateAttributes(@PathVariable UUID id, @RequestBody Map<String, Object> attributes,
+            Authentication authentication) {
+        restaurantAccess.requireOwned(id, authentication);
+        return restaurantService.updateAttributes(id, attributes, AuthenticatedCaller.emailOf(authentication));
     }
 
     @GetMapping("/{id}/guarantee-settings")
@@ -84,15 +92,5 @@ public class RestaurantController {
     public GuaranteeSettingsResponse updateGuaranteeSettings(@PathVariable UUID id,
             @Valid @RequestBody GuaranteeSettingsRequest request, Authentication authentication) {
         return guaranteeSettingsService.update(id, request, AuthenticatedCaller.emailOf(authentication));
-    }
-
-    /** See {@code ReservationController#callerEmail}: the AI microservice is not a user. */
-    private static String callerEmail(Authentication authentication) {
-        if (authentication == null) {
-            return null;
-        }
-        boolean isService = authentication.getAuthorities().stream()
-                .anyMatch(authority -> "ROLE_SERVICE".equals(authority.getAuthority()));
-        return isService ? null : authentication.getName();
     }
 }

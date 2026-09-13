@@ -131,4 +131,6 @@ class CallIngestIntegrationTest extends AbstractIntegrationTest {
     private static final class ServiceApiKeyHeader {
         static final String NAME = "X-Api-Key";
     }
+
+    /** L'organisation creee a l'inscription : la seule sur laquelle l'utilisateur peut agir. */
 }

@@ -3,7 +3,6 @@ package com.callbot.ai.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -21,7 +20,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import com.callbot.ai.dto.RestaurantTableRequest;
 import com.callbot.ai.dto.RestaurantTableResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
-import com.callbot.ai.security.OrganizationScope;
+import com.callbot.ai.repository.RestaurantRepository;
 import com.callbot.ai.repository.RestaurantTableRepository;
 
 @ExtendWith(MockitoExtension.class)
@@ -30,11 +29,9 @@ class RestaurantTableServiceTest {
     @Mock
     private RestaurantTableRepository tableRepository;
     @Mock
-    private OrganizationScope scope;
+    private RestaurantRepository restaurantRepository;
     @InjectMocks
     private RestaurantTableService tableService;
-
-    private static final String CALLER = "owner@resto.fr";
 
     private final UUID restaurantId = UUID.randomUUID();
 
@@ -44,10 +41,10 @@ class RestaurantTableServiceTest {
 
     @Test
     void create_whenRestaurantExists_savesWithDefaultActive() {
-        
+        when(restaurantRepository.existsById(restaurantId)).thenReturn(true);
         when(tableRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        RestaurantTableResponse response = tableService.create(request(), CALLER);
+        RestaurantTableResponse response = tableService.create(request());
 
         assertThat(response.name()).isEqualTo("T1");
         assertThat(response.capacity()).isEqualTo(4);
@@ -56,10 +53,9 @@ class RestaurantTableServiceTest {
 
     @Test
     void create_whenRestaurantMissing_throwsAndDoesNotSave() {
-        doThrow(new ResourceNotFoundException("Restaurant", restaurantId))
-                .when(scope).requireOwnedRestaurant(restaurantId, CALLER);
+        when(restaurantRepository.existsById(restaurantId)).thenReturn(false);
 
-        assertThatThrownBy(() -> tableService.create(request(), CALLER))
+        assertThatThrownBy(() -> tableService.create(request()))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(tableRepository, never()).save(any());
     }
@@ -69,16 +65,16 @@ class RestaurantTableServiceTest {
         UUID id = UUID.randomUUID();
         when(tableRepository.findById(id)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> tableService.get(id, CALLER))
+        assertThatThrownBy(() -> tableService.get(id))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
     @Test
     void delete_whenMissing_throwsAndDoesNotDelete() {
         UUID id = UUID.randomUUID();
-        when(tableRepository.findById(id)).thenReturn(Optional.empty());
+        when(tableRepository.existsById(id)).thenReturn(false);
 
-        assertThatThrownBy(() -> tableService.delete(id, CALLER))
+        assertThatThrownBy(() -> tableService.delete(id))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(tableRepository, never()).deleteById(any());
     }
@@ -87,7 +83,7 @@ class RestaurantTableServiceTest {
     void list_withRestaurantId_filters() {
         when(tableRepository.findByRestaurantId(restaurantId)).thenReturn(List.of());
 
-        tableService.list(restaurantId, CALLER);
+        tableService.list(restaurantId);
 
         verify(tableRepository).findByRestaurantId(restaurantId);
         verify(tableRepository, never()).findAll();

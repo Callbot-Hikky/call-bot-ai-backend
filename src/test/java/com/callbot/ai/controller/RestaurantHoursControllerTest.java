@@ -24,6 +24,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.callbot.ai.dto.RestaurantHoursResponse;
 import com.callbot.ai.exception.ResourceNotFoundException;
 import com.callbot.ai.security.JwtAuthenticationFilter;
+import com.callbot.ai.security.RestaurantAccess;
 import com.callbot.ai.security.ServiceApiKeyFilter;
 import com.callbot.ai.service.RestaurantHoursService;
 
@@ -39,6 +40,8 @@ class RestaurantHoursControllerTest {
 
     @MockitoBean
     private RestaurantHoursService hoursService;
+    @MockitoBean
+    private RestaurantAccess restaurantAccess;
 
     private RestaurantHoursResponse sample() {
         return new RestaurantHoursResponse(UUID.randomUUID(), UUID.randomUUID(), (short) 1,
@@ -47,7 +50,7 @@ class RestaurantHoursControllerTest {
 
     @Test
     void create_withValidPayload_returns201() throws Exception {
-        when(hoursService.create(any(), any())).thenReturn(sample());
+        when(hoursService.create(any())).thenReturn(sample());
 
         mockMvc.perform(post("/api/restaurant-hours")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -69,7 +72,7 @@ class RestaurantHoursControllerTest {
 
     @Test
     void get_returns200() throws Exception {
-        when(hoursService.get(any(), any())).thenReturn(sample());
+        when(hoursService.get(any())).thenReturn(sample());
 
         mockMvc.perform(get("/api/restaurant-hours/" + UUID.randomUUID()))
                 .andExpect(status().isOk())
@@ -78,7 +81,7 @@ class RestaurantHoursControllerTest {
 
     @Test
     void get_whenNotFound_returns404() throws Exception {
-        when(hoursService.get(any(), any()))
+        when(hoursService.get(any()))
                 .thenThrow(new ResourceNotFoundException("RestaurantHours", UUID.randomUUID()));
 
         mockMvc.perform(get("/api/restaurant-hours/" + UUID.randomUUID()))
@@ -87,6 +90,8 @@ class RestaurantHoursControllerTest {
 
     @Test
     void delete_returns204() throws Exception {
+        // La propriete se verifie sur la fiche existante : le service doit la renvoyer.
+        when(hoursService.get(any())).thenReturn(sample());
         mockMvc.perform(delete("/api/restaurant-hours/" + UUID.randomUUID()))
                 .andExpect(status().isNoContent());
     }
