@@ -44,6 +44,15 @@ services:
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:4200/offre/success}
       STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:4200/offre}
+      # Stripe Connect (paiements convives) — endpoint /api/payments/webhook,
+      # signe avec son propre secret (distinct de STRIPE_WEBHOOK_SECRET).
+      STRIPE_CONNECT_WEBHOOK_SECRET: ${STRIPE_CONNECT_WEBHOOK_SECRET:-}
+      STRIPE_CONNECT_RETURN_URL: ${STRIPE_CONNECT_RETURN_URL:-http://localhost:4200/parametres/paiements?onboarding=done}
+      STRIPE_CONNECT_REFRESH_URL: ${STRIPE_CONNECT_REFRESH_URL:-http://localhost:4200/parametres/paiements?onboarding=refresh}
+      STRIPE_CONNECT_SUCCESS_URL: ${STRIPE_CONNECT_SUCCESS_URL:-http://localhost:4200/client/reservations/payee}
+      STRIPE_CONNECT_TOP_UP_SUCCESS_URL: ${STRIPE_CONNECT_TOP_UP_SUCCESS_URL:-http://localhost:4200/client/reservations/complement-regle}
+      STRIPE_CONNECT_CANCEL_URL: ${STRIPE_CONNECT_CANCEL_URL:-http://localhost:4200/client/reservations/paiement-annule}
+      STRIPE_CONNECT_COUNTRY: ${STRIPE_CONNECT_COUNTRY:-FR}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:4200}
     ports:
       - "${SERVER_PORT:-8080}:8080"
