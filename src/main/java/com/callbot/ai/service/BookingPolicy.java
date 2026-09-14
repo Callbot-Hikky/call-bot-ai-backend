@@ -15,8 +15,8 @@ public final class BookingPolicy {
     /** Duree d'occupation d'une table quand le client ne precise pas d'heure de fin. */
     public static final Duration DEFAULT_DURATION = Duration.ofMinutes(90);
 
-    /** Fenetre de creneaux proposee au client, en jours glissants. */
-    public static final int WINDOW_DAYS = 7;
+    /** Fenetre de creneaux proposee au client, en jours glissants (~1 mois). */
+    public static final int WINDOW_DAYS = 30;
 
     /** Un client ne cumule pas plusieurs reservations actives le meme jour dans le meme restaurant. */
     public static final int MAX_ACTIVE_PER_DAY = 1;
