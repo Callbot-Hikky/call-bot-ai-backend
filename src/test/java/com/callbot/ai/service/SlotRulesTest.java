@@ -55,7 +55,7 @@ class SlotRulesTest {
     void requireBookable_mapsReasonsTo400Codes() {
         assertThatThrownBy(() -> SlotRules.requireBookable(PARIS, NOW, NOW.minusDays(1)))
                 .isInstanceOf(BookingException.class).extracting("code").isEqualTo("slot_in_past");
-        assertThatThrownBy(() -> SlotRules.requireBookable(PARIS, NOW, NOW.plusDays(30)))
+        assertThatThrownBy(() -> SlotRules.requireBookable(PARIS, NOW, NOW.plusDays(BookingPolicy.WINDOW_DAYS + 1L)))
                 .isInstanceOf(BookingException.class).extracting("code").isEqualTo("slot_out_of_window");
         assertThatCode(() -> SlotRules.requireBookable(PARIS, NOW, NOW.plusDays(2))).doesNotThrowAnyException();
     }
