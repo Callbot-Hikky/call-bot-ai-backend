@@ -161,18 +161,22 @@ class PublicBookingServiceTest {
     }
 
     @Test
-    void create_beyondSevenDays_isRejectedWith400() {
+    void create_beyondTheWindow_isRejectedWith400() {
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
 
-        assertThatThrownBy(() -> service.create(restaurantId, request(tomorrowEvening().plusDays(8), 2)))
+        // Juste au-delà de la fenêtre glissante, quelle que soit sa taille.
+        OffsetDateTime beyond = tomorrowEvening().plusDays(BookingPolicy.WINDOW_DAYS);
+        assertThatThrownBy(() -> service.create(restaurantId, request(beyond, 2)))
                 .isInstanceOf(BookingException.class)
                 .satisfies(e -> assertThat(((BookingException) e).getCode()).isEqualTo("slot_out_of_window"));
     }
 
     @Test
-    void create_onTheSeventhDay_isAccepted_andOnTheEighth_isRejected() {
+    void create_onTheLastDayOfWindow_isAccepted_andBeyond_isRejected() {
         ZoneId zone = ZoneId.of("Europe/Paris");
-        OffsetDateTime lastDay = LocalDate.now(zone).plusDays(6).atTime(19, 30).atZone(zone).toOffsetDateTime();
+        // Dernier jour réservable = aujourd'hui + (WINDOW_DAYS - 1).
+        OffsetDateTime lastDay = LocalDate.now(zone).plusDays(BookingPolicy.WINDOW_DAYS - 1L)
+                .atTime(19, 30).atZone(zone).toOffsetDateTime();
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
         when(reservationService.slotsFor(any(), eq(lastDay.toLocalDate()), eq(1), eq(2), any(), any()))
                 .thenReturn(slotsWith(lastDay));
@@ -222,10 +226,11 @@ class PublicBookingServiceTest {
     }
 
     @Test
-    void slots_outsideTheSevenDayWindow_isRejectedWith400() {
+    void slots_outsideTheWindow_isRejectedWith400() {
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
 
-        assertThatThrownBy(() -> service.slots(restaurantId, LocalDate.now().plusDays(10), 2))
+        assertThatThrownBy(() -> service.slots(
+                restaurantId, LocalDate.now().plusDays(BookingPolicy.WINDOW_DAYS + 1L), 2))
                 .isInstanceOf(BookingException.class)
                 .satisfies(e -> assertThat(((BookingException) e).getCode()).isEqualTo("date_out_of_window"));
         assertThatThrownBy(() -> service.slots(restaurantId, LocalDate.now().minusDays(1), 2))
