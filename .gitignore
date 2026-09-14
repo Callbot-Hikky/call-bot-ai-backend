@@ -34,3 +34,6 @@ build/
 
 ### Env ###
 .env
+
+# Outillage local Claude Code
+.claude/
