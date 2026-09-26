@@ -130,6 +130,7 @@ class ReservationIntegrationTest extends AbstractIntegrationTest {
         String me = mockMvc.perform(get("/api/me").header("Authorization", "Bearer " + token))
                 .andReturn().getResponse().getContentAsString();
         UUID organizationId = UUID.fromString(JsonPath.read(me, "$.organizationId"));
+        activateSubscription(organizationId);
         return created(token, "/api/restaurants",
                 "{\"organizationId\":\"%s\",\"name\":\"Chez Resa\",\"phoneNumber\":\"%s\"}".formatted(organizationId, phone));
     }

@@ -119,6 +119,8 @@ class OwnershipIntegrationTest extends AbstractIntegrationTest {
     private UUID organizationOf(String token) throws Exception {
         String me = mockMvc.perform(get("/api/me").header("Authorization", "Bearer " + token))
                 .andReturn().getResponse().getContentAsString();
-        return UUID.fromString(JsonPath.read(me, "$.organizationId"));
+        UUID organizationId = UUID.fromString(JsonPath.read(me, "$.organizationId"));
+        activateSubscription(organizationId);
+        return organizationId;
     }
 }

@@ -152,7 +152,9 @@ class ReservationIsolationIntegrationTest extends AbstractIntegrationTest {
                 .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
-        return UUID.fromString(JsonPath.read(me, "$.organizationId"));
+        UUID organizationId = UUID.fromString(JsonPath.read(me, "$.organizationId"));
+        activateSubscription(organizationId);
+        return organizationId;
     }
 
     private String registerAndGetToken(String email) throws Exception {

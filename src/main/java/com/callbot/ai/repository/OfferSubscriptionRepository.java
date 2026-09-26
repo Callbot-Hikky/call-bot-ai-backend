@@ -10,4 +10,6 @@ import com.callbot.ai.model.OfferSubscription;
 public interface OfferSubscriptionRepository extends JpaRepository<OfferSubscription, UUID> {
 
     Optional<OfferSubscription> findByCheckoutSessionId(String checkoutSessionId);
+
+    boolean existsByOrganizationIdAndStatus(UUID organizationId, String status);
 }

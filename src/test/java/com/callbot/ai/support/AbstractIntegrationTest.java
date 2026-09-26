@@ -1,11 +1,17 @@
 package com.callbot.ai.support;
 
+import java.util.UUID;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
+
+import com.callbot.ai.model.OfferSubscription;
+import com.callbot.ai.repository.OfferSubscriptionRepository;
 
 /**
  * Base class for integration tests. Boots the full Spring context against a
@@ -27,10 +33,30 @@ public abstract class AbstractIntegrationTest {
         POSTGRES.start();
     }
 
+    @Autowired
+    private OfferSubscriptionRepository offerSubscriptionRepository;
+
     @DynamicPropertySource
     static void datasourceProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
+    }
+
+    /**
+     * Stands in for a completed Stripe checkout: most integration tests exercise
+     * restaurant/reservation features, not the paywall itself, so they register a user
+     * and go straight to creating a restaurant the way a paying customer would after
+     * checkout. Without this, every one of them would 402 on {@code POST /api/restaurants}
+     * (see {@code RestaurantAccess#requireActiveSubscription}). Tests of the paywall itself
+     * skip this and assert the 402 directly.
+     */
+    protected void activateSubscription(UUID organizationId) {
+        offerSubscriptionRepository.save(OfferSubscription.builder()
+                .organizationId(organizationId)
+                .offerCode("pro")
+                .amountCents(9900)
+                .status(OfferSubscription.STATUS_ACTIVE)
+                .build());
     }
 }

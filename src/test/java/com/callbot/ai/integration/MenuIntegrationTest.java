@@ -43,6 +43,7 @@ class MenuIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         String organizationId = JsonPath.read(me, "$.organizationId");
+        activateSubscription(UUID.fromString(organizationId));
 
         String created = mockMvc.perform(post("/api/restaurants")
                 .header("Authorization", "Bearer " + token)

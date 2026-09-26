@@ -22,6 +22,29 @@ class RestaurantCrudIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private MockMvc mockMvc;
 
+    /**
+     * The bug this guards against: register, never pay, log back in later, and still be
+     * able to configure a restaurant. {@code organizationIdOf} deliberately isn't used
+     * here, since it activates a subscription as a test convenience for every other test.
+     */
+    @Test
+    void create_withoutActiveSubscription_returns402() throws Exception {
+        String token = registerAndGetToken("owner-unpaid@example.com");
+        String me = mockMvc.perform(get("/api/me").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String organizationId = JsonPath.read(me, "$.organizationId");
+
+        mockMvc.perform(post("/api/restaurants")
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"organizationId":"%s","name":"Chez Test","phoneNumber":"+33100000099"}"""
+                        .formatted(organizationId)))
+                .andExpect(status().isPaymentRequired())
+                .andExpect(jsonPath("$.error").value("subscription_required"));
+    }
+
     @Test
     void restaurantCrudLifecycle() throws Exception {
         String token = registerAndGetToken("owner-crud@example.com");
@@ -176,7 +199,9 @@ class RestaurantCrudIntegrationTest extends AbstractIntegrationTest {
                 .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
-        return UUID.fromString(JsonPath.read(me, "$.organizationId"));
+        UUID organizationId = UUID.fromString(JsonPath.read(me, "$.organizationId"));
+        activateSubscription(organizationId);
+        return organizationId;
     }
 
     private String registerAndGetToken(String email) throws Exception {

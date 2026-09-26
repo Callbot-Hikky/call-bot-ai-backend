@@ -60,7 +60,7 @@ public class OfferService {
                 .offerCode(plan.getCode())
                 .amountCents(plan.getAmountCents())
                 .currency(plan.getCurrency())
-                .status("pending")
+                .status(OfferSubscription.STATUS_PENDING)
                 .provider(paymentGateway.providerCode())
                 .checkoutSessionId(session.id())
                 .build();
@@ -107,7 +107,7 @@ public class OfferService {
 
     private void activateFromSession(String checkoutSessionId, String providerSubscriptionId) {
         offerSubscriptionRepository.findByCheckoutSessionId(checkoutSessionId).ifPresent(subscription -> {
-            subscription.setStatus("active");
+            subscription.setStatus(OfferSubscription.STATUS_ACTIVE);
             subscription.setProviderSubscriptionId(providerSubscriptionId);
             offerSubscriptionRepository.save(subscription);
         });

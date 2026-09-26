@@ -44,6 +44,7 @@ public class RestaurantController {
     @ResponseStatus(HttpStatus.CREATED)
     public RestaurantResponse create(@Valid @RequestBody RestaurantRequest request, Authentication authentication) {
         restaurantAccess.requireOrganization(request.organizationId(), authentication);
+        restaurantAccess.requireActiveSubscription(request.organizationId());
         return restaurantService.create(request, AuthenticatedCaller.emailOf(authentication));
     }
 

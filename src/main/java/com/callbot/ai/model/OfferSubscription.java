@@ -26,6 +26,12 @@ import lombok.Setter;
 @Builder
 public class OfferSubscription {
 
+    /** Created alongside a checkout session, before the provider confirms payment. */
+    public static final String STATUS_PENDING = "pending";
+
+    /** The provider confirmed payment: the organization may use paid features. */
+    public static final String STATUS_ACTIVE = "active";
+
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;

@@ -15,9 +15,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 
+import com.callbot.ai.exception.ApiException;
 import com.callbot.ai.exception.ResourceNotFoundException;
+import com.callbot.ai.model.OfferSubscription;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.model.User;
+import com.callbot.ai.repository.OfferSubscriptionRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 import com.callbot.ai.repository.UserRepository;
 
@@ -28,6 +31,8 @@ class RestaurantAccessTest {
     private UserRepository userRepository;
     @Mock
     private RestaurantRepository restaurantRepository;
+    @Mock
+    private OfferSubscriptionRepository offerSubscriptionRepository;
     @Mock
     private Authentication authentication;
     @InjectMocks
@@ -88,6 +93,24 @@ class RestaurantAccessTest {
                 .isInstanceOf(ResourceNotFoundException.class);
         assertThatThrownBy(() -> access.requireOrganization(null, authentication))
                 .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+    }
+
+    @Test
+    void requireActiveSubscription_whenActiveSubscriptionExists_doesNothing() {
+        when(offerSubscriptionRepository.existsByOrganizationIdAndStatus(
+                organizationId, OfferSubscription.STATUS_ACTIVE)).thenReturn(true);
+
+        access.requireActiveSubscription(organizationId);
+    }
+
+    @Test
+    void requireActiveSubscription_whenNoActiveSubscription_throwsPaymentRequired() {
+        when(offerSubscriptionRepository.existsByOrganizationIdAndStatus(
+                organizationId, OfferSubscription.STATUS_ACTIVE)).thenReturn(false);
+
+        assertThatThrownBy(() -> access.requireActiveSubscription(organizationId))
+                .isInstanceOf(ApiException.class)
+                .satisfies(ex -> assertThat(((ApiException) ex).getCode()).isEqualTo("subscription_required"));
     }
 
     @Test

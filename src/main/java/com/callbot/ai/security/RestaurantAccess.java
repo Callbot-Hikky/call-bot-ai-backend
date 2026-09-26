@@ -4,14 +4,18 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.callbot.ai.exception.ApiException;
 import com.callbot.ai.exception.ResourceNotFoundException;
+import com.callbot.ai.model.OfferSubscription;
 import com.callbot.ai.model.Restaurant;
 import com.callbot.ai.model.User;
+import com.callbot.ai.repository.OfferSubscriptionRepository;
 import com.callbot.ai.repository.RestaurantRepository;
 import com.callbot.ai.repository.UserRepository;
 
@@ -29,6 +33,7 @@ public class RestaurantAccess {
 
     private final UserRepository userRepository;
     private final RestaurantRepository restaurantRepository;
+    private final OfferSubscriptionRepository offerSubscriptionRepository;
 
     /** L'organisation de l'utilisateur connecte. */
     @Transactional(readOnly = true)
@@ -49,6 +54,21 @@ public class RestaurantAccess {
         if (!organizationId.equals(organizationOf(authentication))) {
             // Meme raison qu'au-dessus : un 403 confirmerait que cette organisation existe.
             throw new ResourceNotFoundException("Organization", organizationId);
+        }
+    }
+
+    /**
+     * Refuse la creation d'un restaurant tant que l'organisation n'a pas d'abonnement
+     * actif. Sans ce garde-fou, un compte cree puis abandonne avant paiement peut
+     * configurer un restaurant sans jamais passer par Stripe : le paiement redevient
+     * facultatif de fait.
+     */
+    @Transactional(readOnly = true)
+    public void requireActiveSubscription(UUID organizationId) {
+        if (!offerSubscriptionRepository.existsByOrganizationIdAndStatus(
+                organizationId, OfferSubscription.STATUS_ACTIVE)) {
+            throw new ApiException(HttpStatus.PAYMENT_REQUIRED, "subscription_required",
+                    "An active subscription is required to create a restaurant");
         }
     }
 

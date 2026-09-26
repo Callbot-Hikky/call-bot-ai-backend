@@ -170,6 +170,7 @@ class OrganizationIsolationIntegrationTest extends AbstractIntegrationTest {
 
     private String createRestaurant(String token, String name) throws Exception {
         String organizationId = JsonPath.read(me(token), "$.organizationId");
+        activateSubscription(UUID.fromString(organizationId));
         return create(token, "/api/restaurants", """
                 {"organizationId":"%s","name":"%s","phoneNumber":"%s"}"""
                 .formatted(organizationId, name, uniquePhoneNumber()));
