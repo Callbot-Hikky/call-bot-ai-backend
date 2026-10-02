@@ -14,7 +14,9 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # PostgreSQL 16 + pgvector, built on the same Alpine base so existing data keeps its collation.
+    build: ./docker/postgres
+    image: callbot-postgres:16-pgvector
     container_name: callbot-postgres-dev
     restart: unless-stopped
     environment:
@@ -52,6 +54,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me-please-32bytes-minimum-required}
       JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
       SERVICE_API_KEY: ${SERVICE_API_KEY:-dev-service-key-change-me}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       DISCORD_WEBHOOK_CLIENT: ${DISCORD_WEBHOOK_CLIENT:-}
       DISCORD_WEBHOOK_RESTAURANT: ${DISCORD_WEBHOOK_RESTAURANT:-}
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-}

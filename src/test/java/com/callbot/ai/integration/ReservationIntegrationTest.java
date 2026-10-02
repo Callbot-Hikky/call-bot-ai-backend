@@ -1,5 +1,6 @@
 package com.callbot.ai.integration;
 
+import com.callbot.ai.service.BookingPolicy;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -52,7 +53,7 @@ class ReservationIntegrationTest extends AbstractIntegrationTest {
         mockMvc.perform(get("/api/reservations/" + reservationId + "/reschedule-slots?fromDate=2030-01-01")
                 .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.days.length()").value(7))
+                .andExpect(jsonPath("$.days.length()").value(BookingPolicy.WINDOW_DAYS))
                 .andExpect(jsonPath("$.days[0].slots[?(@.startsAt =~ /2030-01-01T20:00.*/)]").exists());
 
         // Suppression : 204, puis la reservation est annulee, pas effacee. Une reservation

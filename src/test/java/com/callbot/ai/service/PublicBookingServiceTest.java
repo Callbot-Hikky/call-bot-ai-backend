@@ -253,7 +253,9 @@ class PublicBookingServiceTest {
         when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
         LocalDate from = LocalDate.now(ZoneId.of("Europe/Paris")).plusDays(2);
         RescheduleSlotsResponse expected = new RescheduleSlotsResponse(List.of());
-        when(reservationService.slotsFor(restaurant, from, 5, 4, BookingPolicy.DEFAULT_DURATION, null)).thenReturn(expected);
+        // Starting two days in, the window has two days fewer left to offer.
+        when(reservationService.slotsFor(restaurant, from, BookingPolicy.WINDOW_DAYS - 2, 4,
+                BookingPolicy.DEFAULT_DURATION, null)).thenReturn(expected);
 
         assertThat(service.slots(restaurantId, from, 4)).isSameAs(expected);
     }
