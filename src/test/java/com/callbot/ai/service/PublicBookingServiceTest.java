@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -82,6 +83,36 @@ class PublicBookingServiceTest {
         return new PublicReservationRequest(startsAt, partySize,
                 new PublicReservationRequest.Customer("Nadia", "06 12 34 56 78"), "  ");
     }
+
+    // Le navigateur qui vient de reserver peut emmener le convive payer tout de suite,
+    // au lieu de le renvoyer attendre son message. Le jeton ne sort QUE dans ce cas.
+    @Test
+    void create_handsBackThePaymentTokenOnlyWhenThereIsSomethingToPay() {
+        OffsetDateTime startsAt = tomorrowEvening();
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
+        when(reservationService.slotsFor(eq(restaurant), eq(startsAt.toLocalDate()), eq(1), eq(2),
+                eq(BookingPolicy.DEFAULT_DURATION), eq(null))).thenReturn(slotsWith(startsAt));
+        when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "+33612345678")).thenReturn(Optional.empty());
+        when(customerRepository.save(any())).thenAnswer(i -> {
+            Customer c = i.getArgument(0);
+            c.setId(UUID.randomUUID());
+            return c;
+        });
+        when(reservationRepository.saveAndFlush(any())).thenAnswer(i -> {
+            Reservation r = i.getArgument(0);
+            r.setId(UUID.randomUUID());
+            return r;
+        });
+        // La politique pose un jeton, comme elle le fait pour un restaurant payant.
+        doAnswer(i -> {
+            i.getArgument(0, Reservation.class).setPaymentToken("tok-a-payer");
+            return null;
+        }).when(guaranteePolicy).applyOnCreation(any(), eq(restaurant), isNull());
+
+        assertThat(service.create(restaurantId, request(startsAt, 2)).paymentToken())
+                .isEqualTo("tok-a-payer");
+    }
+
 
     // Reserver depuis le QR ne doit pas permettre d'echapper aux frais que le restaurant
     // demande a tous ses clients. La politique est appelee AVANT l'enregistrement, sur

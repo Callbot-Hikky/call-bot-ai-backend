@@ -49,7 +49,7 @@ class PublicBookingControllerTest {
     private PublicReservationResponse sample() {
         return new PublicReservationResponse(UUID.randomUUID(), restaurantId, "Chez Test",
                 OffsetDateTime.parse("2030-01-01T19:30:00Z"), OffsetDateTime.parse("2030-01-01T21:00:00Z"),
-                2, "pending", "Nadia");
+                2, "pending", "Nadia", null);
     }
 
     @Test
