@@ -1,5 +1,6 @@
 package com.callbot.ai.integration;
 
+import com.callbot.ai.service.BookingPolicy;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -35,7 +36,7 @@ class PublicBookingIntegrationTest extends AbstractIntegrationTest {
         // Creneaux : sans session, 7 jours, un creneau demain (restaurant sans horaires = ouvert 11h-23h).
         String slots = mockMvc.perform(get("/api/public/restaurants/" + restaurantId + "/slots?partySize=2"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.days.length()").value(7))
+                .andExpect(jsonPath("$.days.length()").value(BookingPolicy.WINDOW_DAYS))
                 .andReturn().getResponse().getContentAsString();
         String startsAt = JsonPath.read(slots, "$.days[1].slots[0].startsAt");
 
