@@ -283,7 +283,7 @@ public class PublicBookingService {
     private static PublicReservationResponse toResponse(Reservation r, Restaurant restaurant, Customer customer) {
         return new PublicReservationResponse(r.getPublicToken(), restaurant.getId(), restaurant.getName(),
                 r.getStartsAt(), r.getEndsAt(), r.getPartySize(), r.getStatus(),
-                displayName(customer));
+                displayName(customer), r.getPaymentToken());
     }
 
     /** Prenom, sinon nom : une fiche creee par l'assistant vocal peut n'avoir que le nom. */
