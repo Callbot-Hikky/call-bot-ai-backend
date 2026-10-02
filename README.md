@@ -9,7 +9,7 @@ utilisateurs, clé d'API de service pour l'IA.
 
 - **Java 21** (LTS)
 - **Spring Boot 4.1** — Web (MVC), Data JPA, Validation, Actuator, Security
-- **PostgreSQL 16**
+- **PostgreSQL 16** avec l'extension **pgvector** (image construite dans `docker/postgres`)
 - **Flyway** pour les migrations de base de données
 - **JWT** (jjwt) pour l'authentification stateless, mots de passe hashés en **BCrypt**
 - **Maven** (via wrapper `./mvnw`)
@@ -130,7 +130,7 @@ front à enchaîner plusieurs requêtes. Ex. `GET /api/reservations/{id}?expand=
 
 ### Endpoints réservés au bot IA (clé d'API de service)
 
-La clé de service n'ouvre **que** ces trois routes — le bot n'a aucun accès au
+La clé de service n'ouvre **que** ces cinq routes — le bot n'a aucun accès au
 reste de l'API.
 
 | Méthode | Endpoint                  | Description                                          |
@@ -138,6 +138,8 @@ reste de l'API.
 | `GET`   | `/api/calls/context`      | Contexte statique du restaurant, lu au décrochage    |
 | `GET`   | `/api/calls/availability` | Disponibilité d'une table à un créneau, en temps réel |
 | `POST`  | `/api/calls/ingest`       | Crée client + appel + réservation (201), idempotent  |
+| `GET`   | `/api/calls/knowledge`    | Les passages de la base de connaissances les plus proches d'une question |
+| `POST`  | `/api/calls/unanswered`   | Signale une question à laquelle le bot n'a pas su répondre (204) |
 
 #### Contexte d'appel
 
@@ -244,6 +246,62 @@ Exemple de payload envoyé par l'IA :
 }
 ```
 
+#### Base de connaissances
+
+Les `attributes` du contexte couvrent les faits à clé fixe (terrasse, halal…).
+Pour tout le reste — carte, allergènes, accès, règles maison — le restaurateur
+écrit ou valide du **texte libre**, retrouvé par similarité avec la question du
+client. **Le backend calcule tous les embeddings** : le bot n'échange que du texte.
+
+```http
+GET /api/calls/knowledge?restaurantPhone=+33611112222&question=vous avez un menu enfant ?&limit=3
+```
+
+```json
+{
+  "question": "vous avez un menu enfant ?",
+  "matches": [
+    { "id": "…", "title": "Vous avez un menu enfant ?",
+      "content": "Oui, un menu enfant à neuf euros.", "score": 0.83 }
+  ]
+}
+```
+
+`limit` vaut 3 par défaut, 5 au maximum : le bot tourne sur un petit modèle au
+contexte court. `score` est une similarité cosinus entre 0 et 1 ; c'est au bot de
+décider en dessous de quel score il préfère ne pas répondre. `matches` peut être vide.
+
+Quand le bot n'a pas su répondre, il le signale :
+
+```http
+POST /api/calls/unanswered
+{ "restaurantPhone": "+33611112222", "question": "On peut venir avec un chien ?" }
+```
+
+La même question posée deux fois (casse, accents et ponctuation ignorés) est
+**comptée**, pas dupliquée. Le restaurateur la voit dans son tableau de bord, y
+répond en une phrase, et la réponse devient une entrée de la base. **Le bot ne
+s'entraîne jamais sur ce que disent les clients** : seul ce que le restaurateur a
+validé est consultable.
+
+### Base de connaissances, côté restaurateur (Bearer)
+
+Toutes ces routes vérifient que le restaurant appartient à l'organisation de l'utilisateur.
+
+| Méthode  | Endpoint                                                        | Description |
+|----------|-----------------------------------------------------------------|-------------|
+| `GET`    | `/api/restaurants/{id}/knowledge`                               | Liste des entrées |
+| `POST`   | `/api/restaurants/{id}/knowledge`                               | Crée une entrée `{title, content}` (201) |
+| `PUT`    | `/api/restaurants/{id}/knowledge/{entryId}`                     | Modifie une entrée, recalcule son embedding |
+| `DELETE` | `/api/restaurants/{id}/knowledge/{entryId}`                     | Supprime une entrée (204) |
+| `POST`   | `/api/restaurants/{id}/knowledge/search`                        | « Tester le bot » : `{question}` → mêmes résultats que le bot |
+| `GET`    | `/api/restaurants/{id}/knowledge/questions`                     | Questions sans réponse, les plus posées d'abord |
+| `POST`   | `/api/restaurants/{id}/knowledge/questions/{qid}/answer`        | `{answer}` → crée l'entrée, ferme la question (201) |
+| `POST`   | `/api/restaurants/{id}/knowledge/questions/{qid}/ignore`        | Écarte la question (204) |
+
+`title` ≤ 200 caractères, `content` ≤ 2000. Si le fournisseur d'embeddings est
+indisponible, l'écriture échoue en `502 embedding_unavailable` et rien n'est enregistré.
+
 ### Offres & paiement (Bearer)
 
 | Méthode | Endpoint                         | Auth | Description                                  |
@@ -290,6 +348,7 @@ exemples dans `.env.example`) :
 | `JWT_SECRET`                 | valeur de dev                  | Secret de signature (min. 32 octets) |
 | `JWT_EXPIRATION_MS`          | `86400000` (24 h)              | Durée de validité du token           |
 | `SERVER_PORT`                | `8080`                         | Port HTTP                            |
+| `VOYAGE_API_KEY`             | vide                           | Clé Voyage AI (embeddings `voyage-4-lite`, 1024 dimensions). Vide = embeddings factices hors ligne, suffisants pour le dev et les tests, inutilisables pour une vraie recherche |
 
 > ⚠️ **En production**, remplace impérativement `JWT_SECRET` par une valeur
 > aléatoire longue et garde-la hors du dépôt.
@@ -352,3 +411,8 @@ Le schéma est géré **exclusivement par Flyway** (`ddl-auto: validate` côté 
 Pour modifier le schéma, ajouter un nouveau fichier dans `src/main/resources/db/migration`
 nommé `V<n>__description.sql`. Ne jamais modifier une migration déjà appliquée
 (le checksum ne correspondrait plus et Flyway refuserait de démarrer).
+
+La migration `V30` crée l'extension `vector` : **la base doit tourner sur l'image
+`docker/postgres`** (PostgreSQL 16 Alpine + pgvector). Sur un PostgreSQL sans
+pgvector, le backend ne démarre pas. L'image garde la base Alpine d'origine exprès :
+le volume de données existant conserve ses règles de tri.
