@@ -40,24 +40,16 @@ public class StripeConnectWebhookParser {
     private static final String SETUP_MODE = "setup";
 
     private final StripeConnectProperties properties;
+    private final StripeProperties platformProperties;
 
+    /** Events from connected accounts, received on {@code /api/payments/webhook}. */
     public Optional<ConnectWebhookEvent> parse(String payload, Map<String, String> headers) {
         if (properties.webhookSecret() == null || properties.webhookSecret().isBlank()) {
             throw new PaymentGatewayException(
                     "Stripe Connect webhook secret is not configured (STRIPE_CONNECT_WEBHOOK_SECRET)");
         }
 
-        String signature = signatureFrom(headers);
-        if (signature == null) {
-            throw new InvalidPaymentSignatureException("Missing Stripe-Signature header");
-        }
-
-        Event event;
-        try {
-            event = Webhook.constructEvent(payload, signature, properties.webhookSecret());
-        } catch (SignatureVerificationException e) {
-            throw new InvalidPaymentSignatureException("Invalid Stripe webhook signature");
-        }
+        Event event = verify(payload, headers, properties.webhookSecret());
 
         return switch (event.getType()) {
             case CHECKOUT_COMPLETED -> checkoutCompleted(event);
@@ -65,6 +57,47 @@ public class StripeConnectWebhookParser {
             case DISPUTE_CREATED -> disputeOpened(event);
             default -> Optional.empty();
         };
+    }
+
+    /**
+     * Reservation events Stripe reports to the platform's own endpoint.
+     *
+     * <p>Booking fees are destination charges: the checkout session belongs to the
+     * platform, not to the restaurant, so its completion and any dispute on it never
+     * reach the Connect endpoint. They arrive on {@code /api/offers/webhook}, signed
+     * with the platform secret, mixed with the subscription checkouts — which carry no
+     * reservation and come back empty here.
+     *
+     * <p>Without a Stripe signature the body is not Stripe's to begin with; it is left
+     * to whichever provider parser owns that endpoint.
+     */
+    public Optional<ConnectWebhookEvent> parsePlatform(String payload, Map<String, String> headers) {
+        if (signatureFrom(headers) == null) {
+            return Optional.empty();
+        }
+        if (platformProperties.webhookSecret() == null || platformProperties.webhookSecret().isBlank()) {
+            throw new PaymentGatewayException("Stripe webhook secret is not configured (STRIPE_WEBHOOK_SECRET)");
+        }
+
+        Event event = verify(payload, headers, platformProperties.webhookSecret());
+
+        return switch (event.getType()) {
+            case CHECKOUT_COMPLETED -> checkoutCompleted(event);
+            case DISPUTE_CREATED -> disputeOpened(event);
+            default -> Optional.empty();
+        };
+    }
+
+    private static Event verify(String payload, Map<String, String> headers, String secret) {
+        String signature = signatureFrom(headers);
+        if (signature == null) {
+            throw new InvalidPaymentSignatureException("Missing Stripe-Signature header");
+        }
+        try {
+            return Webhook.constructEvent(payload, signature, secret);
+        } catch (SignatureVerificationException e) {
+            throw new InvalidPaymentSignatureException("Invalid Stripe webhook signature");
+        }
     }
 
     /**
