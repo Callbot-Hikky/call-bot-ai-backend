@@ -21,6 +21,19 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
+      - name: Vérifier les secrets Stripe
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_PRO_PRICE_ID: ${{ secrets.STRIPE_PRO_PRICE_ID }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_CONNECT_WEBHOOK_SECRET: ${{ secrets.STRIPE_CONNECT_WEBHOOK_SECRET }}
+        # Le .env du serveur est écrasé à chaque déploiement : un secret manquant ici
+        # coupe tous les paiements en staging. Mieux vaut ne pas déployer.
+        run: |
+          for name in STRIPE_SECRET_KEY STRIPE_PRO_PRICE_ID STRIPE_WEBHOOK_SECRET STRIPE_CONNECT_WEBHOOK_SECRET; do
+            if [ -z "${!name}" ]; then echo "::error::Secret GitHub manquant : $name"; exit 1; fi
+          done
+
       - name: Rendre et déposer le .env
         run: |
           cat > .env <<EOF
@@ -32,6 +45,18 @@ jobs:
           FRONTEND_BASE_URL=${{ secrets.FRONTEND_BASE_URL }}
           DISCORD_WEBHOOK_CLIENT=${{ secrets.DISCORD_WEBHOOK_CLIENT }}
           DISCORD_WEBHOOK_RESTAURANT=${{ secrets.DISCORD_WEBHOOK_RESTAURANT }}
+          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_PRO_PRICE_ID=${{ secrets.STRIPE_PRO_PRICE_ID }}
+          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_CONNECT_WEBHOOK_SECRET=${{ secrets.STRIPE_CONNECT_WEBHOOK_SECRET }}
+          STRIPE_SUCCESS_URL=${{ secrets.FRONTEND_BASE_URL }}/offre/success
+          STRIPE_CANCEL_URL=${{ secrets.FRONTEND_BASE_URL }}/offre
+          STRIPE_CONNECT_RETURN_URL=${{ secrets.FRONTEND_BASE_URL }}/parametres/paiements?onboarding=done
+          STRIPE_CONNECT_REFRESH_URL=${{ secrets.FRONTEND_BASE_URL }}/parametres/paiements?onboarding=refresh
+          STRIPE_CONNECT_SUCCESS_URL=${{ secrets.FRONTEND_BASE_URL }}/client/reservations/payee
+          STRIPE_CONNECT_TOP_UP_SUCCESS_URL=${{ secrets.FRONTEND_BASE_URL }}/client/reservations/complement-regle
+          STRIPE_CONNECT_CANCEL_URL=${{ secrets.FRONTEND_BASE_URL }}/client/reservations/paiement-annule
+          CORS_ALLOWED_ORIGINS=${{ secrets.FRONTEND_BASE_URL }}
           EOF
           scp -i ~/.ssh/id_ed25519 .env "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/hikky/.env"
 
