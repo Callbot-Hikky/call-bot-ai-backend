@@ -102,8 +102,10 @@ public class SecurityConfig {
                                 "/api/public/reservations/annulation/*").permitAll()
                         .requestMatchers(HttpMethod.PUT, "/api/public/reservations/modifier/*").permitAll()
                         // Call endpoints reserved for the AI microservice (API key).
-                        .requestMatchers(HttpMethod.POST, "/api/calls/ingest").hasRole("SERVICE")
-                        .requestMatchers(HttpMethod.GET, "/api/calls/context", "/api/calls/availability")
+                        .requestMatchers(HttpMethod.POST, "/api/calls/ingest", "/api/calls/unanswered")
+                        .hasRole("SERVICE")
+                        .requestMatchers(HttpMethod.GET, "/api/calls/context", "/api/calls/availability",
+                                "/api/calls/knowledge")
                         .hasRole("SERVICE")
                         .anyRequest().authenticated())
                 .addFilterBefore(serviceApiKeyFilter, UsernamePasswordAuthenticationFilter.class)

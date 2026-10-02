@@ -32,6 +32,7 @@ jobs:
           FRONTEND_BASE_URL=${{ secrets.FRONTEND_BASE_URL }}
           DISCORD_WEBHOOK_CLIENT=${{ secrets.DISCORD_WEBHOOK_CLIENT }}
           DISCORD_WEBHOOK_RESTAURANT=${{ secrets.DISCORD_WEBHOOK_RESTAURANT }}
+          VOYAGE_API_KEY=${{ secrets.VOYAGE_API_KEY }}
           EOF
           scp -i ~/.ssh/id_ed25519 .env "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/hikky/.env"
 
