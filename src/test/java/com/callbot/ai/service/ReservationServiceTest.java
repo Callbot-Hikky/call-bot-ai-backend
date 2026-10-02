@@ -423,7 +423,7 @@ class ReservationServiceTest {
         RescheduleSlotsResponse direct = reservationService.slotsFor(restaurant, from, 2,
                 Duration.ofMinutes(90), reservationId);
 
-        assertThat(direct.days()).hasSize(7);
+        assertThat(direct.days()).hasSize(BookingPolicy.WINDOW_DAYS);
         assertThat(direct).isEqualTo(viaReschedule);
         // Sans horaires configures : ouvert 11h-23h, un creneau toutes les 30 min, dernier a 21h30.
         assertThat(direct.days().get(0).slots()).hasSize(22);
