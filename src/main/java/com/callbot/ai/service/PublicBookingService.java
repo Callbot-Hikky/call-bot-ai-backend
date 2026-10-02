@@ -50,6 +50,7 @@ public class PublicBookingService {
     private final RestaurantRepository restaurantRepository;
     private final ReservationRepository reservationRepository;
     private final CustomerRepository customerRepository;
+    private final GuaranteePolicy guaranteePolicy;
     private final ApplicationEventPublisher events;
 
     @Transactional(readOnly = true)
@@ -97,9 +98,7 @@ public class PublicBookingService {
 
         Customer customer = upsertCustomer(restaurantId, request.customer());
         requireNoOtherReservationThatDay(restaurant, customer, day, zone);
-        Reservation reservation;
-        try {
-            reservation = reservationRepository.saveAndFlush(Reservation.builder()
+        Reservation pending = Reservation.builder()
                 .restaurantId(restaurantId)
                 .customerId(customer.getId())
                 .tableId(slot.tableId())
@@ -110,7 +109,17 @@ public class PublicBookingService {
                 .status("pending")
                 .source("web")
                 .notes(blankToNull(request.notes()))
-                .build());
+                .build();
+        // Meme garantie que par telephone : reserver depuis le QR ne doit pas permettre
+        // d'echapper aux frais que le restaurant demande a tous ses clients. La politique
+        // pose aussi les jetons d'annulation et de modification, que le parcours web
+        // n'avait pas du tout. Appelee AVANT la sauvegarde, comme les deux autres portes
+        // d'entree : le listener de notification relit l'etat commite pour choisir son
+        // message. Aucun membre du personnel n'est present ici, donc aucune exemption.
+        guaranteePolicy.applyOnCreation(pending, restaurant, null);
+        Reservation reservation;
+        try {
+            reservation = reservationRepository.saveAndFlush(pending);
         } catch (DataIntegrityViolationException e) {
             // Deux clients sur le dernier creneau au meme instant : la base tranche, le second
             // recoit le meme message que si le creneau n'etait plus propose.

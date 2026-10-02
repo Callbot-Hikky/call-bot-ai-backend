@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -53,6 +54,8 @@ class PublicBookingServiceTest {
     @Mock
     private CustomerRepository customerRepository;
     @Mock
+    private GuaranteePolicy guaranteePolicy;
+    @Mock
     private ApplicationEventPublisher events;
     @InjectMocks
     private PublicBookingService service;
@@ -78,6 +81,37 @@ class PublicBookingServiceTest {
     private PublicReservationRequest request(OffsetDateTime startsAt, int partySize) {
         return new PublicReservationRequest(startsAt, partySize,
                 new PublicReservationRequest.Customer("Nadia", "06 12 34 56 78"), "  ");
+    }
+
+    // Reserver depuis le QR ne doit pas permettre d'echapper aux frais que le restaurant
+    // demande a tous ses clients. La politique est appelee AVANT l'enregistrement, sur
+    // l'entite qui sera persistee, et sans exemption : aucun membre du personnel n'est la.
+    @Test
+    void create_appliesTheSameGuaranteeAsTheOtherDoors() {
+        OffsetDateTime startsAt = tomorrowEvening();
+        when(restaurantRepository.findById(restaurantId)).thenReturn(Optional.of(restaurant));
+        when(reservationService.slotsFor(eq(restaurant), eq(startsAt.toLocalDate()), eq(1), eq(2),
+                eq(BookingPolicy.DEFAULT_DURATION), eq(null))).thenReturn(slotsWith(startsAt));
+        when(customerRepository.findByRestaurantIdAndPhone(restaurantId, "+33612345678")).thenReturn(Optional.empty());
+        when(customerRepository.save(any())).thenAnswer(i -> {
+            Customer c = i.getArgument(0);
+            c.setId(UUID.randomUUID());
+            return c;
+        });
+        when(reservationRepository.saveAndFlush(any())).thenAnswer(i -> {
+            Reservation r = i.getArgument(0);
+            r.setId(UUID.randomUUID());
+            return r;
+        });
+
+        service.create(restaurantId, request(startsAt, 2));
+
+        ArgumentCaptor<Reservation> guaranteed = ArgumentCaptor.forClass(Reservation.class);
+        verify(guaranteePolicy).applyOnCreation(guaranteed.capture(), eq(restaurant), isNull());
+        ArgumentCaptor<Reservation> saved = ArgumentCaptor.forClass(Reservation.class);
+        verify(reservationRepository).saveAndFlush(saved.capture());
+        // Meme instance : la politique ecrit sur la reservation qui part en base, pas sur une copie.
+        assertThat(guaranteed.getValue()).isSameAs(saved.getValue());
     }
 
     @Test
