@@ -1,5 +1,6 @@
 package com.callbot.ai.service;
 
+import java.time.LocalDate;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -28,12 +29,13 @@ class SlotRulesTest {
 
     @Test
     void refusalReason_windowIsCountedInRestaurantDays_notUtc() {
-        // 2030-03-07 23:30 Paris: day 7, still inside.
-        OffsetDateTime lastDayLateEvening = OffsetDateTime.parse("2030-03-07T22:30:00Z");
+        LocalDate lastDay = NOW.atZoneSameInstant(PARIS).toLocalDate().plusDays(BookingPolicy.WINDOW_DAYS - 1L);
+        // 23:30 Paris on the last bookable day: still inside.
+        OffsetDateTime lastDayLateEvening = lastDay.atTime(23, 30).atZone(PARIS).toOffsetDateTime();
         assertThat(SlotRules.refusalReason(PARIS, NOW, lastDayLateEvening)).isNull();
-        // 2030-03-08 00:30 Paris (still 03-07 in UTC): day 8.
-        OffsetDateTime dayEightJustAfterMidnight = OffsetDateTime.parse("2030-03-07T23:30:00Z");
-        assertThat(SlotRules.refusalReason(PARIS, NOW, dayEightJustAfterMidnight)).isEqualTo("too_far");
+        // 00:30 Paris the next day (still the previous day in UTC): one day too far.
+        OffsetDateTime justAfterMidnight = lastDay.plusDays(1).atTime(0, 30).atZone(PARIS).toOffsetDateTime();
+        assertThat(SlotRules.refusalReason(PARIS, NOW, justAfterMidnight)).isEqualTo("too_far");
     }
 
     @Test
